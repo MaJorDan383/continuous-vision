@@ -87,16 +87,16 @@ This plugin captures screen content and enumerates window titles. Key facts:
 - **The plugin's routes are served by the Hermes dashboard** at
   `/api/plugins/continuous-vision/*`, so they are reachable wherever that dashboard is
   reachable. Access control is inherited from the dashboard's own auth and binding: if the
-  dashboard is reachable at an address, these routes are reachable there too. Do not expose the
-  Hermes dashboard to an untrusted network while watching a source.
-- **Do not expose the Hermes dashboard to an untrusted network while watching a source.** Treat
-  a running watch as screen-sharing: whatever is in the watched region is readable through the
-  preview and status routes.
+  dashboard is reachable at an address, these routes are reachable there too. Treat a running
+  watch as screen-sharing — whatever is in the watched region is readable through the preview
+  and status routes — and do not expose the dashboard to an untrusted network while watching.
 - **Window titles and screen content are visible** to anything that can reach the dashboard.
 - **Camera access is opt-in** — a camera is opened only when explicitly selected, and the
   device is released on stop so its LED does not stay lit.
-- **Descriptions persist on disk** — `log.jsonl` in the plugin's state
-  directory keeps recent descriptions. Delete it to clear that history.
+- **Descriptions persist on disk** — `log.jsonl` keeps recent descriptions in the plugin's state
+  directory, `$HERMES_HOME/cache/continuous-vision/` (default `~/.hermes/cache/continuous-vision/`,
+  where `status.json`, `vision_model.json` and `stop_request` also live). Delete `log.jsonl` to
+  clear that history.
 - **Frames leave this machine.** Each changed frame is encoded and sent to whichever
   vision-capable model the live session is running, with the built-in prompt. On a cloud
   provider that is a third-party API. Nothing is captured or sent while no source is selected,
