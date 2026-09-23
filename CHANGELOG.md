@@ -11,11 +11,12 @@
   process and cannot stop the backend's engine directly. The loop consumes `stop_request` on its
   next tick, releases the source, and publishes a terminal `running: false` status so context
   injection ends at once instead of at the end of the freshness window.
-- **Fixed: the documented config table disagreed with the source.**
-  `CV_VISION_MAX_EDGE` and `CV_VISION_MAX_PIXELS` were documented but never read (setting them
-  did nothing, silently); the real knob is `CV_VISION_MAX_WIDTH`, and `CV_PREVIEW_MAX_AGE_S` was
-  undocumented. The table is now generated from what the code reads, and the `CV_*` variables are
-  described as read from the backend process environment (not `config.yaml`).
+- **Fixed: the config table was incomplete.** `CV_PREVIEW_MAX_AGE_S` (the preview-refresh cadence)
+  and `CV_VISION_MAX_WIDTH` had no row, and the intake precedence is now spelled out as
+  `_vision_intake()` applies it — `CV_VISION_MAX_EDGE` (older alias `CV_VISION_MAX_WIDTH`), with
+  `CV_VISION_MAX_PIXELS` taking precedence over the edge caps. Every variable the code reads is now
+  in the table, and the `CV_*` variables are described as read from the backend process environment
+  (not `config.yaml`).
 - **Fixed: `pyproject.toml` shipped an invented author email and three dead repository URLs.**
   Email removed; URLs corrected to the real repository.
 - **Changed: the plugin now ships off** (`defaultEnabled: false`). It captures screen content, so

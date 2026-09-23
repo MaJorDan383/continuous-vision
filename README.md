@@ -49,7 +49,9 @@ the Hermes backend (the desktop app inherits your user environment):
 |----------|---------|-------------|
 | `CV_VISION_TIMEOUT_S` | `60` | Timeout (seconds) for a single vision API call |
 | `CV_VISION_ATTEMPTS` | `2` | Attempts per frame before reporting failure |
-| `CV_VISION_MAX_WIDTH` | `1024` | Max width of the frame sent to the model |
+| `CV_VISION_MAX_EDGE` | `1024` | Longest edge of the frame sent to the model (wins over `CV_VISION_MAX_WIDTH`) |
+| `CV_VISION_MAX_PIXELS` | _(unset)_ | Total-pixel budget for that frame; takes precedence over the edge caps |
+| `CV_VISION_MAX_WIDTH` | `1024` | Older alias for the edge cap, and the width cap on the watch's own frames |
 | `CV_VISION_SQUARE` | _(unset)_ | Force a square intake (auto-enabled for CLIP-style encoders) |
 | `CV_VISION_PROMPT` | _(built-in)_ | Prompt sent with each frame for description |
 | `CV_PREVIEW_MAX_AGE_S` | `6.0` | How stale the frame behind the pane preview may get while nothing moves (matches the pane's own 6s poll) |
