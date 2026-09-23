@@ -1,0 +1,17 @@
+name: continuous-vision
+version: 1.0.0
+description: >-
+  Continuous vision augmentation — choose a whole display, an individual
+  application window (including one behind another app), or a camera/webcam,
+  describe changed frames with whatever model Hermes is currently running, and
+  inject the freshest descriptions into the conversation as context.
+license: "MIT"
+author: "MaJorDan"
+repository: "https://github.com/MaJorDan383/continuous-vision"
+platforms: ["windows"]
+# Verified against this version, and the backend imports private Hermes modules
+# (agent.image_routing, agent.opencode_affinity, ...) that older trees do not have — so fail
+# closed rather than half-load. Loosen only after testing a specific older build.
+requires_hermes: ">=0.21.4"
+provides_hooks:
+  - pre_llm_call

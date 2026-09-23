@@ -1,0 +1,7 @@
+# Store text with LF in the repository, check out native endings (CRLF on Windows).
+# Without this, a contributor's editor silently rewrites every line of plugin_api.py.
+* text=auto
+*.zip binary
+*.png binary
+*.jpg binary
+*.ico binary

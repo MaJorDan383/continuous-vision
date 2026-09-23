@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Runtime state written to $HERMES_HOME/cache/continuous-vision/ (see STATE_DIR in
+# dashboard/plugin_api.py). These never belong in the repo: cameras.json in particular
+# holds the enumerated camera device names for this machine.
+status.json
+log.jsonl
+vision_model.json
+cameras.json
+camera_modes.json
+stop_request
+*.tmp
