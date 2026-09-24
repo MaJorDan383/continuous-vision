@@ -51,8 +51,8 @@ hermes plugins enable continuous-vision
 
 `hermes plugins list` shows the state (`hermes plugins show continuous-vision` for details), and
 `hermes plugins disable continuous-vision` turns it off again without deleting anything.
-Installing through the CLI (`hermes plugins install MaJorDan383/continuous-vision`) enables it for
-you.
+Installing through the CLI asks "Enable now? [y/N]" — answer `y`, or pass the flag up front:
+`hermes plugins install MaJorDan383/continuous-vision --enable`.
 
 ## Configuration
 
