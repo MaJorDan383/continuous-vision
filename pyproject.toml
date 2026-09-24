@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuous-vision"
-version = "1.0.0"
+version = "1.0.1"
 description = "Continuous vision plugin for Hermes - monitors screens, windows, cameras, and routes to vision models"
 readme = "README.md"
 license = {text = "MIT"}
@@ -19,10 +19,13 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Operating System :: Microsoft :: Windows",
 ]
+# Upper bounds follow the plugin dependency policy: the oldest API-compatible floor plus a
+# major-version cap, so Hermes' dependency resolver stays predictable when these libraries
+# release a new major.
 dependencies = [
-    "opencv-python-headless>=4.5",
-    "Pillow>=10.0",
-    "openai>=1.0.0",
+    "opencv-python-headless>=4.5,<6",
+    "Pillow>=10.0,<13",
+    "openai>=1.0.0,<3",
 ]
 
 [project.optional-dependencies]

@@ -1,5 +1,5 @@
 name: continuous-vision
-version: 1.0.0
+version: 1.0.1
 description: >-
   Continuous vision augmentation — choose a whole display, an individual
   application window (including one behind another app), or a camera/webcam,

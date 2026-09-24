@@ -24,10 +24,12 @@ Source, issues and releases: **https://github.com/MaJorDan383/continuous-vision*
   never refuse); from 0.21.2 on, the loader enforces it. Use **0.21.4+** if the vision model
   lives on OpenCode Zen/Go: those endpoints reject requests without session-affinity headers,
   and the host helper that builds them only exists from 0.21.4.
-- Python packages `opencv-python-headless`, `Pillow`, `openai` (declared in `pyproject.toml`).
-  Hermes offers to install a plugin's declared dependencies when you enable it; if capture
-  reports a missing dependency instead, install them into the environment that runs Hermes:
-  `pip install opencv-python-headless Pillow openai`
+- Python packages `opencv-python-headless` (`>=4.5,<6`), `Pillow` (`>=10.0,<13`) and `openai`
+  (`>=1.0.0,<3`) — declared in `pyproject.toml` (`[project].dependencies`), the file Hermes reads
+  for plugins. Hermes installs them when you install or enable the plugin, resolved together with
+  Hermes's own dependency ranges (a combination that cannot resolve is refused up front), and
+  re-applies them after `hermes update`. To install them yourself instead:
+  `pip install "opencv-python-headless>=4.5,<6" "Pillow>=10.0,<13" "openai>=1.0.0,<3"`
 
 ### Quick install
 Copy the plugin directory into your Hermes plugins folder:

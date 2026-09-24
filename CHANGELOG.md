@@ -3,6 +3,20 @@
 All notable changes to this plugin. Nothing before the first public release was published, so
 `1.0.0` covers the whole plugin as shipped.
 
+## [1.0.1] - 2026-09-23
+
+### Changed
+- The manifest now asks for **Hermes >=0.20.1** — the oldest host that has everything the plugin
+  calls (`ctx.on_unload` and the `pre_llm_call` hook both land in it; 0.20.0 has no `on_unload`,
+  so its unload path would leak the capture loop). The loader only understands this key from
+  0.21.2 on; older hosts warn and ignore it rather than refusing. OpenCode Zen/Go as the vision
+  model still needs 0.21.4+, where `agent.opencode_affinity` (the session-affinity headers those
+  endpoints require) appears.
+- The pip dependencies are declared with upper bounds — `opencv-python-headless>=4.5,<6`,
+  `Pillow>=10.0,<13`, `openai>=1.0.0,<3` in `pyproject.toml`. Hermes resolves a plugin's
+  declarations together with its own ranges when installing or enabling it, so a major release
+  of either library can no longer make that resolution fail at install time.
+
 ## [1.0.0] - 2026-09-23
 
 ### Added
@@ -22,11 +36,6 @@ All notable changes to this plugin. Nothing before the first public release was 
   log a warning once and fall back to the default. `tool_only` is reserved for builds that expose
   a live-view tool: this plugin registers none, so it injects nothing and logs a warning rather
   than looking like a silent failure.
-- `requires_hermes: ">=0.20.1"` in the manifest — the oldest host that has `ctx.on_unload` and
-  the `pre_llm_call` hook the plugin uses (0.20.0 has no `on_unload`, so its unload path would
-  leak the capture loop). The loader only understands this key from 0.21.2 on; older hosts warn
-  and ignore it rather than refusing. OpenCode Zen/Go as the vision model needs 0.21.4+, where
-  `agent.opencode_affinity` (the session-affinity headers those endpoints require) appears.
 - Tests for the unload path, the injection gates, the injection modes, the vision pipeline and
   the status heartbeat (`test_unload_stop.py`, `test_context_injection.py`,
   `test_injection_modes.py`, `test_vision_pipeline.py`, `test_heartbeat_gate.py`,
