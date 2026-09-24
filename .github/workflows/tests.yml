@@ -1,0 +1,26 @@
+name: tests
+
+# The plugin's suite is hermetic: no desktop session, no camera, no model, no Hermes install.
+# Anything that would need those is either monkeypatched or documented as not covered, so this
+# workflow is the same run as `python -m pytest tests/ -q` on a developer machine.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: pip install --disable-pip-version-check pytest fastapi Pillow
+      - name: Run the test suite
+        run: python -m pytest tests/ -q

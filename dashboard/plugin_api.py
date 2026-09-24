@@ -56,6 +56,12 @@ DEFAULT_THRESHOLD = 85.0  # percent similarity above which a frame is "unchanged
 # intake resize + PNG encode, so the preview copy is refreshed on this cadence instead of every tick;
 # it matches the pane's own 6s preview poll.
 PREVIEW_MAX_AGE_S = float(os.environ.get("CV_PREVIEW_MAX_AGE_S") or 6.0)
+# A status file is a claim, not proof. The loop heartbeats it on every tick, so a claim whose
+# heartbeat has gone cold belongs to a process that died without stopping — a killed backend
+# never reaches the terminal write at the end of _run. The plugin's agent half runs in ANOTHER
+# process and gates context injection on this file, so liveness is judged by the heartbeat here
+# and never by `running` alone. Kept equal to the reader's HEARTBEAT_MAX_AGE_S in __init__.py.
+STATUS_HEARTBEAT_MAX_AGE_S = 120.0
 
 LOG_KEEP = 400  # ring buffer size for descriptions
 
@@ -2120,6 +2126,7 @@ class _Engine:
         self.frame_seq = 0  # bumps whenever last_png is replaced: the /preview cache identity
         self._last_thumb: Optional[bytes] = None  # 64x64 fingerprint of the previous frame
         self._published_at = 0.0  # when last_png was last refreshed
+        self.heartbeat_at: Optional[float] = None  # refreshed every tick: see _publish
 
     # -- status -----------------------------------------------------------
     def status(self) -> dict[str, Any]:
@@ -2127,6 +2134,7 @@ class _Engine:
         route = _route()
         return {
             "running": running,
+            "heartbeat_at": self.heartbeat_at,
             "monitor": self.monitor,
             "source": self.monitor,
             "source_kind": (self.monitor or {}).get("kind") or "monitor",
@@ -2208,7 +2216,7 @@ class _Engine:
             self.source_missing = False
             self.grab_method = ""
             self.started_at = time.time()
-        self._thread = threading.Thread(target=self._run, name="continuous-vision", daemon=True)
+        self._thread = threading.Thread(target=self._run_guarded, name="continuous-vision", daemon=True)
         self._thread.start()
         _write_json(STATUS_PATH, {**self.status(), "v": 1})
         return self.status()
@@ -2315,12 +2323,41 @@ class _Engine:
             self._publish()
             self._sleep(started)
 
-        # The loop is over — stop event, unload request, or repeated capture failure. Release
-        # the source and publish a TERMINAL state: the agent half gates injection on
-        # status["running"], so leaving the last running=true frame behind would keep feeding
-        # stale screen descriptions into turns for the whole freshness window.
-        release_camera()
-        _write_json(STATUS_PATH, {**self.status(), "running": False, "v": 1})
+        # The loop is over — stop event, unload request, or repeated capture failure. Releasing the
+        # source and publishing the TERMINAL state belongs to _run_guarded, which does it on every
+        # exit path, including one this loop cannot catch.
+
+    def _run_guarded(self) -> None:
+        """Run the loop, and publish the terminal state however it ends — including a crash.
+
+        The agent half runs in a different process and gates context injection on
+        status["running"], so a loop that dies unexpectedly must not leave `running: true` behind:
+        before this wrapper existed, a crash left the last live reading on disk and the flag with
+        it. Writing `running: false` plus a final heartbeat covers every exit — clean stop, unload
+        request, and the loop dying on an exception it did not catch. Readers still verify the
+        heartbeat (see STATUS_HEARTBEAT_MAX_AGE_S); this is the writer's half of that one rule.
+        """
+        try:
+            self._run()
+        except BaseException as exc:  # incl. SystemExit: the file must not outlive the loop
+            self.last_error = f"{type(exc).__name__}: {exc}"[:400]
+            import traceback  # noqa: PLC0415 - only needed on the crash path
+
+            _append_log(
+                {
+                    "ts": time.time(),
+                    "event": "loop_crashed",
+                    "error": self.last_error,
+                    "trace": traceback.format_exc()[:800],
+                }
+            )
+        finally:
+            try:
+                release_camera()
+            except Exception:  # best-effort: releasing must never eat the terminal write
+                pass
+            self.heartbeat_at = time.time()
+            _write_json(STATUS_PATH, {**self.status(), "running": False, "v": 1})
 
     def _on_source_failure(self, exc: Exception) -> None:
         """A capture failed. Retry a few times, then stop with the reason (no substitution)."""
@@ -2340,6 +2377,10 @@ class _Engine:
         self._stop.wait(max(0.1, (self.interval_ms - elapsed) / 1000.0))
 
     def _publish(self) -> None:
+        # Every tick refreshes the heartbeat, including ticks that describe nothing (unchanged
+        # frame, failing source, minimized window). Liveness is the one thing this file must never
+        # lie about — see reconcile_stale_status() and STATUS_HEARTBEAT_MAX_AGE_S.
+        self.heartbeat_at = time.time()
         _write_json(STATUS_PATH, {**self.status(), "v": 1})
 
 
@@ -2386,9 +2427,53 @@ async def get_sources(refresh: bool = False) -> dict[str, Any]:
     }
 
 
+def reconcile_stale_status() -> Optional[dict[str, Any]]:
+    """Correct a status file left behind by an engine that is gone.
+
+    A killed backend never reaches the terminal write at the end of ``_run``, so its last reading
+    keeps claiming ``running: true`` — and the plugin's agent half runs in ANOTHER process and has
+    only this file to go on. This is the backend's half of the rule: when it is woken (the pane's
+    /status poll), a claim whose heartbeat has gone cold is rewritten as stopped. A live watch
+    refreshes its heartbeat every tick, so this can never clobber a running one.
+    """
+    try:
+        data = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not data.get("running"):
+        return None
+    beat = data.get("heartbeat_at")
+    if beat is None:  # a writer too old to heartbeat: the file's own mtime is the next evidence
+        try:
+            beat = STATUS_PATH.stat().st_mtime
+        except OSError:
+            beat = None
+    if beat is not None:
+        try:
+            if (time.time() - float(beat)) <= STATUS_HEARTBEAT_MAX_AGE_S:
+                return None
+        except (TypeError, ValueError):
+            pass  # an unreadable heartbeat is not evidence of life: fall through and correct it
+    data.update(
+        {
+            "running": False,
+            "stale": True,
+            "heartbeat_at": beat,
+            "error": data.get("error") or "the capture loop is gone (its heartbeat went cold)",
+        }
+    )
+    _write_json(STATUS_PATH, {**data, "v": 1})
+    _append_log({"ts": time.time(), "event": "stale_status_corrected"})
+    return data
+
+
 @router.get("/status")
 async def get_status() -> dict[str, Any]:
     """Engine state plus the intake the frames are currently sized for."""
+    # A snapshot request is also the moment to heal a file left by a backend that died: in-process
+    # `running` is authoritative here, but whatever reads the file from outside is not.
+    if not ENGINE.status().get("running"):
+        reconcile_stale_status()
     return {**ENGINE.status(), "intake": _watch_intake()}
 
 

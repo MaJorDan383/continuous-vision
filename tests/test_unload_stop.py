@@ -48,12 +48,16 @@ def test_the_request_is_consumed_exactly_once(shared_state: Path) -> None:
     assert plugin_api._consume_stop_request() is False, "a stale request must not stop a later watch"
 
 
-def test_the_loop_honours_the_request_without_capturing_a_frame(shared_state: Path) -> None:
+def test_the_loop_honours_the_request_without_capturing_a_frame(
+    shared_state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The guard sits at the top of the loop, before any capture — so this test needs no
-    source, no camera and no model, and still exercises the real loop body."""
+    source, no camera and no model, and still exercises the real loop body plus the wrapper the
+    thread actually runs (`_run_guarded`, which owns the terminal write on every exit path)."""
+    monkeypatch.setattr(plugin_api, "release_camera", lambda: None)  # nothing was opened
     cv.on_unload()
     engine = plugin_api._Engine()
-    engine._run()  # returns as soon as it sees the request
+    engine._run_guarded()  # returns as soon as it sees the request
 
     assert engine._stop.is_set()
     assert "unloaded" in engine.last_error

@@ -182,6 +182,42 @@ def _claim_on_change(key: str, signature: str, now: float) -> bool:
         return True
 
 
+# A status file is a claim from another process, and the loop rewrites it every tick (2s by
+# default). A clean stop writes `running: false`; a backend that is killed or crashes never gets
+# there and leaves `running: true` behind for good. This is how long a claim stays believable —
+# longer than the slowest plausible describe call, far shorter than hours. The backend keeps the
+# same constant (dashboard/plugin_api.py: STATUS_HEARTBEAT_MAX_AGE_S) and heals the file it owns.
+HEARTBEAT_MAX_AGE_S = 120.0
+
+
+def _status_mtime() -> Optional[float]:
+    """The status file's own mtime — the heartbeat for any writer too old to write the field."""
+    try:
+        return _STATUS.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _engine_running(status: dict[str, Any], mtime: Optional[float] = None) -> bool:
+    """Is the capture loop alive — or is ``running`` a claim left behind by a process that died?
+
+    ``running`` alone is not evidence: the backend writes it and only corrects it on a clean stop.
+    The heartbeat is the evidence. With nothing to judge (a writer too old to heartbeat) the flag
+    stands, and the freshness gate on the reading still bounds how long anything stale can ride a
+    turn. With a heartbeat that has gone cold, the claim is refused.
+
+    Liveness is measured against the wall clock and never against the caller's ``now``: that clock
+    is injection bookkeeping, while "is that other process still ticking" is a fact about now.
+    """
+    if not status.get("running"):
+        return False
+    beat = status.get("heartbeat_at") or mtime
+    if beat is None:
+        return True
+    age = _freshness(beat)
+    return age is not None and age <= HEARTBEAT_MAX_AGE_S
+
+
 def build_context(
     now: Optional[float] = None,
     *,
@@ -192,7 +228,7 @@ def build_context(
     """Return the injection text, or None when nothing should be injected."""
     chosen = mode or inject_mode()
     status = _read_status()
-    if not status or not status.get("running"):
+    if not status or not _engine_running(status, _status_mtime()):
         return None
 
     age = _freshness(status.get("last_at"))

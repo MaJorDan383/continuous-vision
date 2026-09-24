@@ -107,10 +107,12 @@ mode is read on every turn, so one restart applies it to every session.
 | `on_mention` | Only when your own message points at the screen — `screen`, `monitor`, `display`, `desktop`, `what do you see`, `can you see`, `look at`, `see this`, `this window`, `visible` (the full list is `MENTION_PATTERNS` in `__init__.py`, kept narrow on purpose: firing on the word "window" in "open a new window" costs tokens on a turn that never needed eyes) |
 | `tool_only` | Never ambient — reserved for builds that expose a live-view *tool*. This plugin registers no such tool, so the model is told nothing and the plugin logs a warning rather than looking like a silent failure |
 
-Every mode keeps the same two hard gates: the capture loop must be running **and** the newest
-frame must have arrived within the last 90 seconds (a stale description is misleading, so it is
-never injected). The block is capped at 1200 characters and 3 descriptions. An unrecognised
-value logs a warning once and falls back to `on_change`.
+Every mode keeps the same hard gates: the capture loop must be **alive** — its heartbeat in
+`status.json` newer than 120 seconds, so a backend that crashed or was killed stops injecting
+instead of riding its last reading — and the newest frame must have arrived within the last 90
+seconds (a stale description is misleading, so it is never injected). The block is capped at 1200
+characters and 3 descriptions. An unrecognised value logs a warning once and falls back to
+`on_change`.
 
 `on_change` compares the descriptions themselves, not the whole block: the header states the
 frame's age, which changes every turn, so a whole-text comparison would never match and the mode
