@@ -167,3 +167,53 @@ def test_the_tracked_sessions_stay_bounded(state: Path) -> None:
     for index in range(cv.MAX_TRACKED_SESSIONS + 20):
         cv.build_context(mode="on_change", session_id=f"session-{index}")
     assert len(cv._sent_index) <= cv.MAX_TRACKED_SESSIONS
+
+
+# --- the pane's pick (the inject_mode file) ---------------------------------------------------
+
+
+def _pick(state: Path, mode: str) -> None:
+    """What POST /inject_mode writes: the mode name, one line, in the state dir."""
+    (state / "inject_mode").write_text(mode + "\n", encoding="utf-8")
+
+
+def test_the_pane_pick_beats_the_environment(state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pick in the desktop pane is the user's latest explicit intent: its file outranks the
+    environment variable, which only sets the value for setups nobody ever picked in."""
+    monkeypatch.setenv(cv.INJECT_MODE_ENV, "on_mention")
+    _pick(state, "always")
+    assert cv.inject_mode() == "always"
+    _write(state, _status())
+    assert cv.build_context(session_id="s1", user_message="no screen words here") is not None
+
+
+def test_the_pane_pick_accepts_hyphenated_modes(state: Path) -> None:
+    _pick(state, "on-mention")
+    assert cv.inject_mode() == "on_mention"
+
+
+def test_a_broken_pane_pick_falls_back_to_the_environment(
+    state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hand-edited or half-written file must not take the feature down with it."""
+    monkeypatch.setenv(cv.INJECT_MODE_ENV, "always")
+    _pick(state, "banana")
+    assert cv.inject_mode() == "always"
+
+
+def test_clearing_the_pane_pick_restores_the_environment(
+    state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(cv.INJECT_MODE_ENV, "always")
+    _pick(state, "tool_only")
+    assert cv.inject_mode() == "tool_only"
+    (state / "inject_mode").unlink()
+    assert cv.inject_mode() == "always"
+
+
+def test_the_hook_reads_the_pane_pick_end_to_end(state: Path) -> None:
+    """Through the registered hook body: a pick of tool_only silences injection with no
+    environment variable, no restart, and no test-only override."""
+    _write(state, _status())
+    _pick(state, "tool_only")
+    assert cv.on_pre_llm_call(session_id="s1", user_message="look at my screen") is None

@@ -8,7 +8,7 @@ Peripheral Vision is a Hermes plugin that keeps a live view of your screen, wind
 - **Window capture** — captures specific applications by window handle
 - **Camera capture** — enumerates cameras (DSHOW) and grabs frames
 - **Vision routing** — sends frames to the configured vision model automatically
-- **Pre-LLM context injection** — adds live descriptions to a turn through the `pre_llm_call` hook, gated by `PV_VISION_INJECT_MODE` so a screen that has not moved does not pay for itself on every turn
+- **Pre-LLM context injection** — adds live descriptions to a turn through the `pre_llm_call` hook, gated by the inject mode (picked in the pane, or `PV_VISION_INJECT_MODE`) so a screen that has not moved does not pay for itself on every turn
 - **Desktop pane** — shows a live preview with monitor/window/camera picker, vision model candidates, and pin support
 
 ## Installation
@@ -74,7 +74,7 @@ the Hermes backend (the desktop app inherits your user environment):
 | `PV_VISION_MAX_WIDTH` | `1024` | Older alias for the edge cap, and the width cap on the watch's own frames |
 | `PV_VISION_SQUARE` | _(unset)_ | Force a square intake (auto-enabled for CLIP-style encoders) |
 | `PV_VISION_PROMPT` | _(built-in)_ | Prompt sent with each frame for description |
-| `PV_VISION_INJECT_MODE` | `on_change` | When a fresh reading rides a turn — see [Injection modes](#injection-modes) |
+| `PV_VISION_INJECT_MODE` | `on_change` | When a fresh reading rides a turn; a pick in the desktop pane overrides it — see [Injection modes](#injection-modes) |
 | `PV_PREVIEW_MAX_AGE_S` | `6.0` | How stale the frame behind the pane preview may get while nothing moves (matches the pane's own 6s poll) |
 | `PV_SOURCE_FAILURE_LIMIT` | `3` | Consecutive capture failures before the watch stops |
 | `PV_CAMERA_MAX_INDEX` | `4` | Highest DirectShow camera index to probe |
@@ -96,15 +96,21 @@ choose a display, window, or camera in the desktop pane. The pane shows:
 3. **Camera picker** — switch between connected cameras
 4. **Vision candidates** — model suggestions based on intake size
 5. **Pin button** — lock a specific vision model for the session
-6. **Status** — live status of the capture engine, frame count, source info
+6. **Inject picker** ("rides your turns") — when fresh readings are shared; see [Injection modes](#injection-modes)
+7. **Status** — live status of the capture engine, frame count, source info
 
 Once a source is selected, descriptions are injected into Hermes context before a response,
 giving the assistant a live view of your screen. How often is yours to decide:
 
 ### Injection modes
 
-Set `PV_VISION_INJECT_MODE` in the environment that runs the Hermes backend and restart it. The
-mode is read on every turn, so one restart applies it to every session.
+Pick it live in the desktop pane — the **"rides your turns"** select, just below the interval
+picker. The pick is stored in the plugin's state directory (`inject_mode`) and read on every
+turn, so it applies to the next turn in every session without a restart. Without a pane pick,
+`PV_VISION_INJECT_MODE` — set in the environment that runs the Hermes backend — supplies the
+value; without either, the default applies. A pane pick outranks the environment variable;
+deleting the `inject_mode` file (or posting an empty mode to `POST /inject_mode`) restores the
+environment/default value. The select's tooltip names where the current value comes from.
 
 | Mode | What rides a turn |
 |------|-------------------|
@@ -139,7 +145,7 @@ This plugin captures screen content and enumerates window titles. Key facts:
   device is released on stop so its LED does not stay lit.
 - **Descriptions persist on disk** — `log.jsonl` keeps recent descriptions in the plugin's state
   directory, `$HERMES_HOME/cache/peripheral-vision/` (default `~/.hermes/cache/peripheral-vision/`,
-  where `status.json`, `vision_model.json` and `stop_request` also live). Delete `log.jsonl` to
+  where `status.json`, `vision_model.json`, `inject_mode` and `stop_request` also live). Delete `log.jsonl` to
   clear that history.
 - **An injected description also becomes part of the session transcript.** The block rides the
   turn's user message, and the host stores the exact bytes sent to the model in the session

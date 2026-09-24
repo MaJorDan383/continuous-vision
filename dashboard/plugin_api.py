@@ -15,6 +15,7 @@ Route map
                          (never defaults; the UI must prompt for a choice)
 - ``POST /stop``      → stop the loop
 - ``GET  /status``    → running state + ring buffer of recent descriptions
+- ``POST /inject_mode`` → when fresh readings ride turns (pane pick beats the env var)
 - ``GET  /preview``   → last captured frame (downscaled data URL) for the pane
 
 State is persisted to ``$HERMES_HOME/cache/peripheral-vision/`` so the
@@ -62,6 +63,20 @@ PREVIEW_MAX_AGE_S = float(os.environ.get("PV_PREVIEW_MAX_AGE_S") or 6.0)
 # process and gates context injection on this file, so liveness is judged by the heartbeat here
 # and never by `running` alone. Kept equal to the reader's HEARTBEAT_MAX_AGE_S in __init__.py.
 STATUS_HEARTBEAT_MAX_AGE_S = 120.0
+
+# ── Inject mode ───────────────────────────────────────────────────────────
+# WHEN a fresh reading is allowed to ride a turn. The desktop pane writes this file
+# (POST /inject_mode below); the plugin's agent half reads it on every turn
+# (__init__.py::inject_mode), so a pick in the pane applies to the next turn without
+# restarting anything. Precedence — pane pick, then PV_VISION_INJECT_MODE (read from the
+# process that runs the backend), then the default — is exactly the order the agent half
+# applies, so what the pane shows is what the hook will read. Kept equal to the agent
+# half's constants; the two processes must not import each other (see __init__.py::on_unload),
+# so the copies move together and a test guards they cannot drift apart.
+INJECT_MODE_PATH = STATE_DIR / "inject_mode"
+INJECT_MODE_ENV = "PV_VISION_INJECT_MODE"
+INJECT_MODES = ("always", "on_change", "on_mention", "tool_only")
+DEFAULT_INJECT_MODE = "on_change"
 
 LOG_KEEP = 400  # ring buffer size for descriptions
 
@@ -1711,6 +1726,47 @@ def _save_pin(provider: str, model: str) -> dict[str, str]:
     return {}
 
 
+def _normalize_inject_mode(raw: str) -> str:
+    """A mode name, case/space-insensitively (hyphens read as underscores); '' when unknown."""
+    value = str(raw or "").strip().lower().replace("-", "_")
+    return value if value in INJECT_MODES else ""
+
+
+def _inject_mode_state() -> dict[str, str]:
+    """Which mode rides turns, and where that choice comes from.
+
+    The file the pane writes outranks ``PV_VISION_INJECT_MODE``, which outranks the default
+    — the same order the agent half applies per turn. ``source`` names the winner so the
+    pane can say why instead of guessing.
+    """
+    try:
+        pinned = _normalize_inject_mode(INJECT_MODE_PATH.read_text(encoding="utf-8"))
+    except OSError:
+        pinned = ""
+    if pinned:
+        return {"mode": pinned, "source": "pane"}
+    from_env = _normalize_inject_mode(os.environ.get(INJECT_MODE_ENV) or "")
+    if from_env:
+        return {"mode": from_env, "source": "environment"}
+    return {"mode": DEFAULT_INJECT_MODE, "source": "default"}
+
+
+def _save_inject_mode(mode: str) -> None:
+    """Persist the pane's pick (a bare mode name); '' clears it back to env/default.
+
+    Plain text, not JSON: the agent half reads this file on every turn and one line IS the
+    payload — but it still gets the atomic swap, because a torn read would flip the mode
+    for a turn.
+    """
+    if mode:
+        _write_text_atomic(INJECT_MODE_PATH, mode + "\n")
+        return
+    try:
+        INJECT_MODE_PATH.unlink()
+    except OSError:
+        pass
+
+
 def _route(session_id: str = "") -> dict[str, Any]:
     """Resolve the model that describes frames.
 
@@ -2060,8 +2116,8 @@ def _consume_stop_request() -> bool:
     return True
 
 
-def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """Write JSON atomically, with a per-writer temp name.
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Write a state file atomically, with a per-writer temp name.
 
     A fixed ``<name>.tmp`` is a collision: two writers (the engine thread plus a probe, a CLI call or
     a second start) both target it, one gets PermissionError and its tick dies. The temp name carries
@@ -2070,7 +2126,7 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp")
     try:
-        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8")
         for attempt in range(6):  # Windows: a reader holding the target can briefly refuse the swap
             try:
                 os.replace(tmp, path)
@@ -2085,6 +2141,11 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write JSON atomically — see ``_write_text_atomic`` for the collision story."""
+    _write_text_atomic(path, json.dumps(data, indent=1))
 
 
 def _append_log(entry: dict[str, Any]) -> None:
@@ -2469,12 +2530,12 @@ def reconcile_stale_status() -> Optional[dict[str, Any]]:
 
 @router.get("/status")
 async def get_status() -> dict[str, Any]:
-    """Engine state plus the intake the frames are currently sized for."""
+    """Engine state, the intake the frames are sized for, and the inject-mode pick."""
     # A snapshot request is also the moment to heal a file left by a backend that died: in-process
     # `running` is authoritative here, but whatever reads the file from outside is not.
     if not ENGINE.status().get("running"):
         reconcile_stale_status()
-    return {**ENGINE.status(), "intake": _watch_intake()}
+    return {**ENGINE.status(), "intake": _watch_intake(), "inject_mode": _inject_mode_state()}
 
 
 @router.get("/vision")
@@ -2548,6 +2609,25 @@ async def post_start(payload: dict[str, Any] = Body(default={})) -> dict[str, An
 async def post_stop() -> dict[str, Any]:
     # Same reason as /start: stopping joins the watch thread and releases the camera device.
     return {"ok": True, "status": await asyncio.to_thread(ENGINE.stop)}
+
+
+@router.post("/inject_mode")
+async def post_inject_mode(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Pick when fresh readings ride turns; an empty ``mode`` clears the pane's pick.
+
+    The pick is written where the agent half reads it on its next turn, so it applies
+    without restarting anything. A value that is not one of the modes is refused rather
+    than stored — a typo must not silently configure nothing.
+    """
+    requested = str(payload.get("mode") or "")
+    mode = _normalize_inject_mode(requested)
+    if requested.strip() and not mode:
+        return {"ok": False, "error": f"mode must be one of {', '.join(INJECT_MODES)}"}
+    try:
+        _save_inject_mode(mode)
+    except OSError as exc:
+        return {"ok": False, "error": f"could not persist the inject mode: {exc}"}
+    return {"ok": True, "inject_mode": _inject_mode_state()}
 
 
 @router.get("/preview")

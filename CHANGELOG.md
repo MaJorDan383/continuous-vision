@@ -3,6 +3,30 @@
 All notable changes to this plugin. Nothing before the first public release was published, so
 `1.0.0` covers the whole plugin as shipped.
 
+## [1.2.0] - 2026-09-23
+
+### Added
+- **The inject mode is pickable in the pane.** A "rides your turns" select below the interval
+  picker chooses when fresh readings are shared — on change (default), every turn, on mention,
+  or never — and applies to the next turn in every session, no restart. The pick is persisted
+  in the state directory as `inject_mode` (plain one-line text, written atomically) and read
+  by the injection hook on every turn. Precedence: the pane's pick, then
+  `PV_VISION_INJECT_MODE`, then the built-in default — and the select's tooltip names which of
+  the three is in effect, so what the pane shows is what the hook will read. On a backend too
+  old to serve the route the row stays hidden rather than rendering a control that cannot work.
+- `POST /inject_mode` — validates the pick (case/hyphen-insensitive; an unknown value is
+  refused rather than stored, an empty one clears the pick back to the environment/default);
+  `GET /status` now carries `inject_mode` (the mode plus its source).
+- Tests: the pane-pick precedence in `test_injection_modes.py` (the file beats the
+  environment, hyphenated values, a broken file falling back, clearing, and the hook honoring
+  the pick end to end), and `test_inject_mode_api.py` (the route's validation and round-trip,
+  the cross-half handoff — the route writes exactly what the hook reads — and a guard that the
+  constants the two halves share by duplication cannot drift apart).
+
+### Changed
+- `_write_json`'s atomic swap is now `_write_text_atomic`, shared with the new pick file (same
+  pid + random temp name, same brief retry when Windows readers hold the target).
+
 ## [1.1.0] - 2026-09-23
 
 ### Added

@@ -13,12 +13,13 @@ files the backend writes:
     $HERMES_HOME/cache/peripheral-vision/status.json    (loop state)
     $HERMES_HOME/cache/peripheral-vision/log.jsonl      (descriptions)
     $HERMES_HOME/cache/peripheral-vision/stop_request   (unload asked the loop to stop)
+    $HERMES_HOME/cache/peripheral-vision/inject_mode    (the pane's pick: when to inject)
 
 Rules that keep this from being a nuisance:
   * inject ONLY while the loop is running and the last frame is fresh;
-  * inject only as often as ``PV_VISION_INJECT_MODE`` asks for — re-sending the
-    same reading on every turn is the difference between ambient awareness and
-    a tax on every request;
+  * inject only as often as the chosen mode asks for — picked live in the desktop
+    pane, else ``PV_VISION_INJECT_MODE``; re-sending the same reading on every
+    turn is the difference between ambient awareness and a tax on every request;
   * cap the text (the docs' spill path truncates anyway) and never raise —
     a broken state file must never slow down or break a turn.
 """
@@ -55,6 +56,11 @@ MAX_DESCRIPTIONS = 3
 INJECT_MODES = ("always", "on_change", "on_mention", "tool_only")
 DEFAULT_INJECT_MODE = "on_change"
 INJECT_MODE_ENV = "PV_VISION_INJECT_MODE"
+
+# The pane's pick (POST /inject_mode in dashboard/plugin_api.py) is persisted to this file in the
+# state dir, and it OUTRANKS the environment variable: a pick in the pane is the user's latest
+# explicit intent, while the env var is for setups nobody picked in. Delete the file to fall back.
+INJECT_MODE_FILE = "inject_mode"
 
 # on_change: identical descriptions are re-sent once this long has passed since the last
 # injection, so a screen that never moves is still re-anchored instead of going silent for the
@@ -121,9 +127,28 @@ def _warn_once(key: str, message: str) -> None:
     logger.warning(message)
 
 
+def _read_pinned_mode() -> str:
+    """The pane's pick, normalized; '' when never picked or unreadable."""
+    try:
+        raw = (_STATE_DIR / INJECT_MODE_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return raw.strip().lower().replace("-", "_")
+
+
 def inject_mode() -> str:
-    """The configured mode, or the default when unset. Read per turn, so a test or a
-    restart picks up a change without reimporting the plugin."""
+    """The configured mode. Precedence: the pane's pick, then ``PV_VISION_INJECT_MODE``,
+    then the default. Read per turn, so a pick in the pane applies to the next turn in
+    every session without a restart or a reimport."""
+    pinned = _read_pinned_mode()
+    if pinned in INJECT_MODES:
+        return pinned
+    if pinned:
+        _warn_once(
+            f"mode-file:{pinned}",
+            f"peripheral-vision: {INJECT_MODE_FILE} contains {pinned!r}, not one of "
+            f"{', '.join(INJECT_MODES)}; ignoring it",
+        )
     raw = (os.environ.get(INJECT_MODE_ENV) or "").strip().lower().replace("-", "_")
     if raw in INJECT_MODES:
         return raw

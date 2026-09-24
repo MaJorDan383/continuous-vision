@@ -7,6 +7,11 @@
  * the picker always prompts and nothing is captured until the user picks a source
  * and confirms (no default, no auto-pick).
  *
+ * A second picker ("rides your turns") chooses WHEN fresh readings are shared: picking
+ * one POSTs to the backend, which persists it where the agent half reads it on the next
+ * turn — no restart. That pick outranks PV_VISION_INJECT_MODE, which outranks the
+ * built-in default.
+ *
  * Backend: /api/plugins/peripheral-vision/* (dashboard/plugin_api.py).
  *
  * Plain ESM, loaded uncompiled — UI is jsx() calls, not JSX syntax.
@@ -65,6 +70,29 @@ const VISION_MODES = [
 ]
 // A backend source kind (or, for older backends, an id prefix) -> a vision mode.
 const KIND_MODE = { monitor: 'displays', window: 'windows', camera: 'cameras' }
+
+// When a fresh reading rides a turn — the same four modes the agent half knows, ordered
+// everyday-first. The labels are the user's words; the tooltip carries the full sentence.
+const INJECT_MODES = [
+  { value: 'on_change', label: 'on change' },
+  { value: 'always', label: 'every turn' },
+  { value: 'on_mention', label: 'on mention' },
+  { value: 'tool_only', label: 'never' }
+]
+const INJECT_HINT = {
+  on_change:
+    'a fresh reading rides a turn only when the screen changed since the last one sent (re-anchored every 10 minutes)',
+  always: 'every turn while the reading is fresh',
+  on_mention: 'only when your message points at the screen, e.g. “look at my screen”',
+  tool_only:
+    'never ambient — for setups with a live-view tool; this build registers none, so nothing is shared'
+}
+// Where the current value comes from, named so the tooltip can say it.
+const INJECT_SOURCE = {
+  pane: 'picked here',
+  environment: 'from PV_VISION_INJECT_MODE',
+  default: 'built-in default'
+}
 
 function SourceRow({ source, selected, onSelect, preview }) {
   const size = `${source.width}×${source.height}`
@@ -161,6 +189,9 @@ function PeripheralVisionPane({ ctx }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [pinChoice, setPinChoice] = useState('')
+  // The inject-mode pick: optimistic while the POST is in flight, then /status is the
+  // authority (the same value the agent half's hook reads on the next turn).
+  const [injectPick, setInjectPick] = useState('')
 
   const status = useQuery({
     queryKey: [ID, 'status'],
@@ -188,6 +219,11 @@ function PeripheralVisionPane({ ctx }) {
           : 'displays')
     : ''
   const activeMode = mode || watchedMode || 'displays'
+  // When fresh readings ride turns. Absent on a backend that predates POST /inject_mode —
+  // the row below then does not render (nothing to pick against, no dead control).
+  const injectState = data.inject_mode || null
+  const injectMode = injectPick || (injectState && injectState.mode) || 'on_change'
+  const injectOrigin = injectPick ? 'pane' : (injectState && injectState.source) || 'default'
   // The chat on screen — peripheral vision describes frames with ITS model.
   const focusedSessionId = useValue(host.state.focusedSessionId)
   const activeSessionId = useValue(host.state.activeSessionId)
@@ -263,6 +299,29 @@ function PeripheralVisionPane({ ctx }) {
       refresh()
     }
   }, [ctx, refresh])
+
+  const changeInjectMode = useCallback(
+    async value => {
+      haptic('tap')
+      setInjectPick(value)
+      setError('')
+      try {
+        const result = await ctx.rest('/inject_mode', { method: 'POST', body: { mode: value } })
+        if (result && result.ok === false) {
+          setError(result.error || 'could not set the inject mode')
+          return
+        }
+        // Refetch first: dropping the optimistic value before the new one is on its way
+        // back would flash the old mode.
+        await queryClient.invalidateQueries({ queryKey: [ID, 'status'] })
+      } catch (err) {
+        setError(String((err && err.message) || err))
+      } finally {
+        setInjectPick('')
+      }
+    },
+    [ctx, queryClient]
+  )
 
   const usePinnedModel = useCallback(async () => {
     if (!pinChoice) {
@@ -384,6 +443,36 @@ function PeripheralVisionPane({ ctx }) {
           })
         ]
       }),
+
+      injectState
+        ? jsxs('div', {
+            className: 'flex items-center gap-2 text-xs text-(--ui-text-tertiary)',
+            children: [
+              jsx('span', { children: 'rides your turns' }),
+              jsx(Tip, {
+                label: `Sharing into turns — ${INJECT_HINT[injectMode] || INJECT_HINT.on_change} (${
+                  INJECT_SOURCE[injectOrigin] || INJECT_SOURCE.default
+                })`,
+                children: jsx(Select, {
+                  value: injectMode,
+                  onValueChange: changeInjectMode,
+                  children: jsxs(SelectTrigger, {
+                    className: 'h-6 w-28 text-xs',
+                    'aria-label': 'inject mode',
+                    children: [
+                      jsx(SelectValue, {}),
+                      jsx(SelectContent, {
+                        children: INJECT_MODES.map(option =>
+                          jsx(SelectItem, { value: option.value, children: option.label }, option.value)
+                        )
+                      })
+                    ]
+                  })
+                })
+              })
+            ]
+          })
+        : null,
 
       jsxs('div', {
         className:

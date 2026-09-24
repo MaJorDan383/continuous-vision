@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peripheral-vision"
-version = "1.1.0"
+version = "1.2.0"
 description = "Peripheral Vision plugin for Hermes - monitors screens, windows, cameras, and routes frames to vision models"
 readme = "README.md"
 license = {text = "MIT"}
