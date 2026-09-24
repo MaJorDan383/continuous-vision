@@ -5,7 +5,7 @@ __pycache__/
 build/
 dist/
 
-# Runtime state written to $HERMES_HOME/cache/continuous-vision/ (see STATE_DIR in
+# Runtime state written to $HERMES_HOME/cache/peripheral-vision/ (see STATE_DIR in
 # dashboard/plugin_api.py). These never belong in the repo: cameras.json in particular
 # holds the enumerated camera device names for this machine.
 status.json

@@ -1,10 +1,10 @@
-"""Continuous Vision — Hermes plugin backend.
+"""Peripheral Vision — Hermes plugin backend.
 
 Captures ONE explicitly-chosen monitor on an interval, filters out frames that
 barely changed, and describes genuinely new frames with a configured
 OpenAI-compatible multimodal vision endpoint.
 
-Mounted by Hermes at ``/api/plugins/continuous-vision/*`` (manifest.json →
+Mounted by Hermes at ``/api/plugins/peripheral-vision/*`` (manifest.json →
 ``"api": "plugin_api.py"``).
 
 Route map
@@ -17,7 +17,7 @@ Route map
 - ``GET  /status``    → running state + ring buffer of recent descriptions
 - ``GET  /preview``   → last captured frame (downscaled data URL) for the pane
 
-State is persisted to ``$HERMES_HOME/cache/continuous-vision/`` so the
+State is persisted to ``$HERMES_HOME/cache/peripheral-vision/`` so the
 ``pre_llm_call`` hook (which runs in the agent/gateway process, not this web
 process) can inject the freshest descriptions as conversation context.
 """
@@ -43,7 +43,7 @@ router = APIRouter()
 
 # ── Paths / constants ─────────────────────────────────────────────────────
 HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-STATE_DIR = HERMES_HOME / "cache" / "continuous-vision"
+STATE_DIR = HERMES_HOME / "cache" / "peripheral-vision"
 STATUS_PATH = STATE_DIR / "status.json"
 LOG_PATH = STATE_DIR / "log.jsonl"
 # Written by the plugin's agent half when it is unloaded (__init__.py::on_unload). That half
@@ -55,7 +55,7 @@ DEFAULT_THRESHOLD = 85.0  # percent similarity above which a frame is "unchanged
 # How stale the frame behind /preview may get while nothing moves. Unchanged ticks no longer pay the
 # intake resize + PNG encode, so the preview copy is refreshed on this cadence instead of every tick;
 # it matches the pane's own 6s preview poll.
-PREVIEW_MAX_AGE_S = float(os.environ.get("CV_PREVIEW_MAX_AGE_S") or 6.0)
+PREVIEW_MAX_AGE_S = float(os.environ.get("PV_PREVIEW_MAX_AGE_S") or 6.0)
 # A status file is a claim, not proof. The loop heartbeats it on every tick, so a claim whose
 # heartbeat has gone cold belongs to a process that died without stopping — a killed backend
 # never reaches the terminal write at the end of _run. The plugin's agent half runs in ANOTHER
@@ -72,10 +72,10 @@ LOG_KEEP = 400  # ring buffer size for descriptions
 # and the pane prompts for a vision-capable model — it never silently hands the
 # screen to a different provider.
 OVERRIDE_PATH = STATE_DIR / "vision_model.json"
-VISION_TIMEOUT_S = int(os.environ.get("CV_VISION_TIMEOUT_S") or 60)
-VISION_ATTEMPTS = int(os.environ.get("CV_VISION_ATTEMPTS") or 2)
-SOURCE_FAILURE_LIMIT = int(os.environ.get("CV_SOURCE_FAILURE_LIMIT") or 3)
-VISION_MAX_WIDTH = int(os.environ.get("CV_VISION_MAX_WIDTH") or 1024)
+VISION_TIMEOUT_S = int(os.environ.get("PV_VISION_TIMEOUT_S") or 60)
+VISION_ATTEMPTS = int(os.environ.get("PV_VISION_ATTEMPTS") or 2)
+SOURCE_FAILURE_LIMIT = int(os.environ.get("PV_SOURCE_FAILURE_LIMIT") or 3)
+VISION_MAX_WIDTH = int(os.environ.get("PV_VISION_MAX_WIDTH") or 1024)
 # ── Model intake ──────────────────────────────────────────────────────────────
 # The camera captures at its native mode; what TRAVELS is sized for the model that will read it,
 # always keeping the original aspect ratio. Black bars appear only when the model's encoder needs a
@@ -98,7 +98,7 @@ _CLIP_SQUARE_HINTS = ("llava", "bakllava", "moondream", "nanollava", "clip", "si
 DEFAULT_INTAKE_EDGE = 1568   # Claude's recommended long edge: the conservative common intake
 LOCAL_INTAKE_EDGE = 1024     # local VLMs are built around ~1MP
 CLIP_SQUARE_EDGE = 336       # CLIP ViT-L/14-336: hand it a square or it gets squashed
-VISION_PROMPT = os.environ.get("CV_VISION_PROMPT") or (
+VISION_PROMPT = os.environ.get("PV_VISION_PROMPT") or (
     "Describe what is on this computer screen in 2-4 sentences: which apps or windows are "
     "visible, what the user appears to be doing, and any notable on-screen text."
 )
@@ -388,10 +388,10 @@ def list_windows(limit: int = 150) -> list[dict[str, Any]]:
 
 
 # ── Cameras (poll the OS default webcam, or any attached one) ─────────────
-CAMERA_MAX_INDEX = int(os.environ.get("CV_CAMERA_MAX_INDEX") or 4)
-CAMERA_CACHE_S = int(os.environ.get("CV_CAMERA_CACHE_S") or 600)
-CAMERA_PROBE_TIMEOUT_S = float(os.environ.get("CV_CAMERA_PROBE_TIMEOUT_S") or 5.0)
-CAMERA_PROBE_WAVE = int(os.environ.get("CV_CAMERA_PROBE_WAVE") or 2)
+CAMERA_MAX_INDEX = int(os.environ.get("PV_CAMERA_MAX_INDEX") or 4)
+CAMERA_CACHE_S = int(os.environ.get("PV_CAMERA_CACHE_S") or 600)
+CAMERA_PROBE_TIMEOUT_S = float(os.environ.get("PV_CAMERA_PROBE_TIMEOUT_S") or 5.0)
+CAMERA_PROBE_WAVE = int(os.environ.get("PV_CAMERA_PROBE_WAVE") or 2)
 _CAMERA_CACHE: dict[str, Any] = {"at": 0.0, "devices": [], "probing": False, "thread": None}
 # Set when the user picks a camera: an exploratory probe must stop opening devices immediately.
 _CAM_PROBE_ABORT = threading.Event()
@@ -971,7 +971,7 @@ class _MSG(ctypes.Structure):
     ]
 
 
-_THUMB_CLASS = "HermesContinuousVisionThumbHost"
+_THUMB_CLASS = "HermesPeripheralVisionThumbHost"
 
 
 def _pump(hwnd: int, seconds: float) -> None:
@@ -1277,16 +1277,16 @@ def _env_int(name: str) -> int:
 def _vision_intake(provider: str = "", model: str = "", base_url: str = "") -> dict[str, Any]:
     """The frame size the recipient model will actually take: ``max_edge``, ``max_pixels``, ``square``.
 
-    Order of authority: ``CV_VISION_MAX_EDGE`` (or the older ``CV_VISION_MAX_WIDTH``) plus
-    ``CV_VISION_MAX_PIXELS``/``CV_VISION_SQUARE`` win outright; then a square-only encoder, because
+    Order of authority: ``PV_VISION_MAX_EDGE`` (or the older ``PV_VISION_MAX_WIDTH``) plus
+    ``PV_VISION_MAX_PIXELS``/``PV_VISION_SQUARE`` win outright; then a square-only encoder, because
     that is correctness rather than budget; then the provider's own budget; then a local-endpoint
     guess; then the default. Never raises — an unresolvable model still gets a sane frame.
     """
     provider_key = (provider or "").strip().lower()
     name = f"{provider_key}/{model or ''}".lower()
-    env_edge = _env_int("CV_VISION_MAX_EDGE") or _env_int("CV_VISION_MAX_WIDTH") or 1024
-    env_pixels = _env_int("CV_VISION_MAX_PIXELS")
-    env_square = (os.environ.get("CV_VISION_SQUARE") or "").strip().lower()
+    env_edge = _env_int("PV_VISION_MAX_EDGE") or _env_int("PV_VISION_MAX_WIDTH") or 1024
+    env_pixels = _env_int("PV_VISION_MAX_PIXELS")
+    env_square = (os.environ.get("PV_VISION_SQUARE") or "").strip().lower()
 
     for alias, canonical in (("claude", "anthropic"), ("codex", "openai-codex"), ("gpt", "openai")):
         # A local bridge (claude-web, codex-bridge, ...) proxies a cloud model: it takes that
@@ -2216,7 +2216,7 @@ class _Engine:
             self.source_missing = False
             self.grab_method = ""
             self.started_at = time.time()
-        self._thread = threading.Thread(target=self._run_guarded, name="continuous-vision", daemon=True)
+        self._thread = threading.Thread(target=self._run_guarded, name="peripheral-vision", daemon=True)
         self._thread.start()
         _write_json(STATUS_PATH, {**self.status(), "v": 1})
         return self.status()

@@ -20,7 +20,7 @@ import pytest
 
 PLUGIN_DIR = Path(__file__).parent.parent
 
-_spec = importlib.util.spec_from_file_location("continuous_vision_agent_half", PLUGIN_DIR / "__init__.py")
+_spec = importlib.util.spec_from_file_location("peripheral_vision_agent_half", PLUGIN_DIR / "__init__.py")
 cv = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cv)
 

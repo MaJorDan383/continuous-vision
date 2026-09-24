@@ -1,13 +1,13 @@
-name: continuous-vision
-version: 1.0.1
+name: peripheral-vision
+version: 1.0.2
 description: >-
-  Continuous vision augmentation — choose a whole display, an individual
+  Peripheral vision for the conversation — choose a whole display, an individual
   application window (including one behind another app), or a camera/webcam,
   describe changed frames with whatever model Hermes is currently running, and
   inject the freshest descriptions into the conversation as context.
 license: "MIT"
 author: "MaJorDan"
-homepage: "https://github.com/MaJorDan383/continuous-vision"
+homepage: "https://github.com/MaJorDan383/peripheral-vision"
 platforms: ["windows"]
 # Lowest host with everything the plugin calls: ctx.on_unload and the pre_llm_call hook both
 # exist from 0.20.1 (0.20.0 has no on_unload, so its unload path would leak the capture loop),

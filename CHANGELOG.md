@@ -3,6 +3,19 @@
 All notable changes to this plugin. Nothing before the first public release was published, so
 `1.0.0` covers the whole plugin as shipped.
 
+## [1.0.2] - 2026-09-23
+
+### Changed
+- **Renamed to Peripheral Vision** - the name now says how it watches: at the edge, in the
+  background, continuously. The plugin key is `peripheral-vision` (was `continuous-vision`),
+  the repository moved to https://github.com/MaJorDan383/peripheral-vision (old links
+  redirect), and the environment variables use the `PV_` prefix - `PV_VISION_INJECT_MODE`,
+  `PV_CAMERA_MAX_INDEX`, and so on (previously `CV_`).
+- The state directory is now `$HERMES_HOME/cache/peripheral-vision/`. Existing installs:
+  enable the plugin under its new key (`hermes plugins enable peripheral-vision`) and copy
+  anything to keep - a pinned `vision_model.json`, `log.jsonl` - from the old
+  `cache/continuous-vision/` directory.
+
 ## [1.0.1] - 2026-09-23
 
 ### Changed
@@ -71,7 +84,7 @@ All notable changes to this plugin. Nothing before the first public release was 
   stop the backend's engine directly. The loop consumes `stop_request` on its next tick, releases
   the source, and publishes a terminal `running: false` status.
 - **A capture loop that crashed or was killed left `running: true` in `status.json` for good.**
-  Seen live on this machine: a loop died after a vision-model failure and its status file still
+  Seen live in practice: a loop died after a vision-model failure and its status file still
   claimed to be running twenty hours later, because only a *clean* stop reached the terminal
   write. Two halves, one rule: the loop now heartbeats the file on every tick (`heartbeat_at`,
   refreshed in `_publish`), the thread wrapper `_run_guarded` publishes the terminal state on

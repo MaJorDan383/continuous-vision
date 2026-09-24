@@ -22,7 +22,7 @@ sys.path.insert(0, str(PLUGIN_DIR / "dashboard"))
 
 import plugin_api  # noqa: E402  (the runtime puts dashboard/ on the path the same way)
 
-_spec = importlib.util.spec_from_file_location("continuous_vision_agent_half", PLUGIN_DIR / "__init__.py")
+_spec = importlib.util.spec_from_file_location("peripheral_vision_agent_half", PLUGIN_DIR / "__init__.py")
 cv = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cv)
 

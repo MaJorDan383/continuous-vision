@@ -1,6 +1,6 @@
-# Continuous Vision
+# Peripheral Vision
 
-Continuous Vision is a Hermes plugin that keeps a live view of your screen, windows, and cameras, and feeds fresh descriptions to Hermes before each response. It turns your desktop into a persistent context source so Hermes can see what's on your screen, which window is focused, and what your cameras see — without you having to screenshot every time.
+Peripheral Vision is a Hermes plugin that keeps a live view of your screen, windows, and cameras, and feeds fresh descriptions to Hermes before each response. It turns your desktop into a persistent context source so Hermes can see what's on your screen, which window is focused, and what your cameras see — without you having to screenshot every time.
 
 ## Features
 
@@ -8,12 +8,12 @@ Continuous Vision is a Hermes plugin that keeps a live view of your screen, wind
 - **Window capture** — captures specific applications by window handle
 - **Camera capture** — enumerates cameras (DSHOW) and grabs frames
 - **Vision routing** — sends frames to the configured vision model automatically
-- **Pre-LLM context injection** — adds live descriptions to a turn through the `pre_llm_call` hook, gated by `CV_VISION_INJECT_MODE` so a screen that has not moved does not pay for itself on every turn
+- **Pre-LLM context injection** — adds live descriptions to a turn through the `pre_llm_call` hook, gated by `PV_VISION_INJECT_MODE` so a screen that has not moved does not pay for itself on every turn
 - **Desktop pane** — shows a live preview with monitor/window/camera picker, vision model candidates, and pin support
 
 ## Installation
 
-Source, issues and releases: **https://github.com/MaJorDan383/continuous-vision**
+Source, issues and releases: **https://github.com/MaJorDan383/peripheral-vision**
 
 ### Requirements
 - **Windows 10/11** (the capture stack uses Win32/DWM/DirectShow — no Linux/macOS support)
@@ -36,15 +36,15 @@ Copy the plugin directory into your Hermes plugins folder:
 
 **PowerShell (Windows):**
 ```powershell
-Copy-Item -Recurse continuous-vision "$env:LOCALAPPDATA\hermes\plugins\continuous-vision"
+Copy-Item -Recurse peripheral-vision "$env:LOCALAPPDATA\hermes\plugins\peripheral-vision"
 ```
 
 **Git Bash / MSYS:**
 ```bash
-cp -r continuous-vision/ "$LOCALAPPDATA/hermes/plugins/continuous-vision/"
+cp -r peripheral-vision/ "$LOCALAPPDATA/hermes/plugins/peripheral-vision/"
 ```
 
-If you run Hermes with a custom `HERMES_HOME`, use `$HERMES_HOME/plugins/continuous-vision` instead.
+If you run Hermes with a custom `HERMES_HOME`, use `$HERMES_HOME/plugins/peripheral-vision` instead.
 
 ### Enable it
 
@@ -52,13 +52,13 @@ Hermes loads a **standalone** plugin only when its key is listed under `plugins.
 directory you copied in stays inert — no capture, no context injection — until you say so:
 
 ```bash
-hermes plugins enable continuous-vision
+hermes plugins enable peripheral-vision
 ```
 
-`hermes plugins list` shows the state (`hermes plugins show continuous-vision` for details), and
-`hermes plugins disable continuous-vision` turns it off again without deleting anything.
+`hermes plugins list` shows the state (`hermes plugins show peripheral-vision` for details), and
+`hermes plugins disable peripheral-vision` turns it off again without deleting anything.
 Installing through the CLI asks "Enable now? [y/N]" — answer `y`, or pass the flag up front:
-`hermes plugins install MaJorDan383/continuous-vision --enable`.
+`hermes plugins install MaJorDan383/peripheral-vision --enable`.
 
 ## Configuration
 
@@ -67,20 +67,20 @@ the Hermes backend (the desktop app inherits your user environment):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CV_VISION_TIMEOUT_S` | `60` | Timeout (seconds) for a single vision API call |
-| `CV_VISION_ATTEMPTS` | `2` | Attempts per frame before reporting failure |
-| `CV_VISION_MAX_EDGE` | `1024` | Longest edge of the frame sent to the model (wins over `CV_VISION_MAX_WIDTH`) |
-| `CV_VISION_MAX_PIXELS` | _(unset)_ | Total-pixel budget for that frame; takes precedence over the edge caps |
-| `CV_VISION_MAX_WIDTH` | `1024` | Older alias for the edge cap, and the width cap on the watch's own frames |
-| `CV_VISION_SQUARE` | _(unset)_ | Force a square intake (auto-enabled for CLIP-style encoders) |
-| `CV_VISION_PROMPT` | _(built-in)_ | Prompt sent with each frame for description |
-| `CV_VISION_INJECT_MODE` | `on_change` | When a fresh reading rides a turn — see [Injection modes](#injection-modes) |
-| `CV_PREVIEW_MAX_AGE_S` | `6.0` | How stale the frame behind the pane preview may get while nothing moves (matches the pane's own 6s poll) |
-| `CV_SOURCE_FAILURE_LIMIT` | `3` | Consecutive capture failures before the watch stops |
-| `CV_CAMERA_MAX_INDEX` | `4` | Highest DirectShow camera index to probe |
-| `CV_CAMERA_CACHE_S` | `600` | Seconds the enumerated camera list stays cached |
-| `CV_CAMERA_PROBE_TIMEOUT_S` | `5.0` | Timeout (seconds) for detecting one camera |
-| `CV_CAMERA_PROBE_WAVE` | `2` | Camera probe waves before giving up |
+| `PV_VISION_TIMEOUT_S` | `60` | Timeout (seconds) for a single vision API call |
+| `PV_VISION_ATTEMPTS` | `2` | Attempts per frame before reporting failure |
+| `PV_VISION_MAX_EDGE` | `1024` | Longest edge of the frame sent to the model (wins over `PV_VISION_MAX_WIDTH`) |
+| `PV_VISION_MAX_PIXELS` | _(unset)_ | Total-pixel budget for that frame; takes precedence over the edge caps |
+| `PV_VISION_MAX_WIDTH` | `1024` | Older alias for the edge cap, and the width cap on the watch's own frames |
+| `PV_VISION_SQUARE` | _(unset)_ | Force a square intake (auto-enabled for CLIP-style encoders) |
+| `PV_VISION_PROMPT` | _(built-in)_ | Prompt sent with each frame for description |
+| `PV_VISION_INJECT_MODE` | `on_change` | When a fresh reading rides a turn — see [Injection modes](#injection-modes) |
+| `PV_PREVIEW_MAX_AGE_S` | `6.0` | How stale the frame behind the pane preview may get while nothing moves (matches the pane's own 6s poll) |
+| `PV_SOURCE_FAILURE_LIMIT` | `3` | Consecutive capture failures before the watch stops |
+| `PV_CAMERA_MAX_INDEX` | `4` | Highest DirectShow camera index to probe |
+| `PV_CAMERA_CACHE_S` | `600` | Seconds the enumerated camera list stays cached |
+| `PV_CAMERA_PROBE_TIMEOUT_S` | `5.0` | Timeout (seconds) for detecting one camera |
+| `PV_CAMERA_PROBE_WAVE` | `2` | Camera probe waves before giving up |
 
 Choosing the vision model is **not** an environment variable: pin it from the desktop pane,
 which writes `vision_model.json` into the plugin's state directory. An empty pin restores
@@ -103,7 +103,7 @@ giving the assistant a live view of your screen. How often is yours to decide:
 
 ### Injection modes
 
-Set `CV_VISION_INJECT_MODE` in the environment that runs the Hermes backend and restart it. The
+Set `PV_VISION_INJECT_MODE` in the environment that runs the Hermes backend and restart it. The
 mode is read on every turn, so one restart applies it to every session.
 
 | Mode | What rides a turn |
@@ -129,7 +129,7 @@ would save nothing.
 This plugin captures screen content and enumerates window titles. Key facts:
 
 - **The plugin's routes are served by the Hermes dashboard** at
-  `/api/plugins/continuous-vision/*`, so they are reachable wherever that dashboard is
+  `/api/plugins/peripheral-vision/*`, so they are reachable wherever that dashboard is
   reachable. Access control is inherited from the dashboard's own auth and binding: if the
   dashboard is reachable at an address, these routes are reachable there too. Treat a running
   watch as screen-sharing — whatever is in the watched region is readable through the preview
@@ -138,7 +138,7 @@ This plugin captures screen content and enumerates window titles. Key facts:
 - **Camera access is opt-in** — a camera is opened only when explicitly selected, and the
   device is released on stop so its LED does not stay lit.
 - **Descriptions persist on disk** — `log.jsonl` keeps recent descriptions in the plugin's state
-  directory, `$HERMES_HOME/cache/continuous-vision/` (default `~/.hermes/cache/continuous-vision/`,
+  directory, `$HERMES_HOME/cache/peripheral-vision/` (default `~/.hermes/cache/peripheral-vision/`,
   where `status.json`, `vision_model.json` and `stop_request` also live). Delete `log.jsonl` to
   clear that history.
 - **An injected description also becomes part of the session transcript.** The block rides the
@@ -164,7 +164,7 @@ Frames are sent to the session's vision-capable model with a prompt asking for a
 injects whatever the model returns, including non-English text
 (`tests/test_vision_pipeline.py::test_vision_description_passes_through_model_output` asserts
 exactly that pass-through). If descriptions arrive in another language, the model or the prompt
-(`CV_VISION_PROMPT`) is the thing to change — the plugin will not silently drop or translate a
+(`PV_VISION_PROMPT`) is the thing to change — the plugin will not silently drop or translate a
 response.
 
 ## License

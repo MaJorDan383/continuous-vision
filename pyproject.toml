@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "continuous-vision"
-version = "1.0.1"
-description = "Continuous vision plugin for Hermes - monitors screens, windows, cameras, and routes to vision models"
+name = "peripheral-vision"
+version = "1.0.2"
+description = "Peripheral Vision plugin for Hermes - monitors screens, windows, cameras, and routes frames to vision models"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -35,9 +35,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/MaJorDan383/continuous-vision"
-Repository = "https://github.com/MaJorDan383/continuous-vision"
-Issues = "https://github.com/MaJorDan383/continuous-vision/issues"
+Homepage = "https://github.com/MaJorDan383/peripheral-vision"
+Repository = "https://github.com/MaJorDan383/peripheral-vision"
+Issues = "https://github.com/MaJorDan383/peripheral-vision/issues"
 
 # This is a Hermes plugin: it is distributed and loaded as a DIRECTORY (plugin.yaml +
 # __init__.py + dashboard/ + desktop/), not as an importable Python package — the directory

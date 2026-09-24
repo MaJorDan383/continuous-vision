@@ -1,11 +1,11 @@
 /**
- * Continuous Vision — desktop half.
+ * Peripheral Vision — desktop half.
  *
  * A pane that watches ONE explicitly chosen source: a whole display or an
  * individual application window. The picker always prompts and nothing is
  * captured until the user picks a source and confirms (no default, no auto-pick).
  *
- * Backend: /api/plugins/continuous-vision/* (dashboard/plugin_api.py).
+ * Backend: /api/plugins/peripheral-vision/* (dashboard/plugin_api.py).
  *
  * Plain ESM, loaded uncompiled — UI is jsx() calls, not JSX syntax.
  * Only @hermes/plugin-sdk, react and react/jsx-runtime resolve.
@@ -38,9 +38,9 @@ import {
 import { useCallback, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
-const ID = 'continuous-vision'
+const ID = 'peripheral-vision'
 // The registry namespaces a contribution id as `<pluginId>:<localId>`, so the pane
-// registered below is reachable as `continuous-vision:pane`.
+// registered below is reachable as `peripheral-vision:pane`.
 const PANE_ID = `${ID}:pane`
 // On-screen visibility of that pane (`host.paneVisibility` is memoized per id, so this
 // is resolved once and subscribed to normally — atom(false) for desktops without it).
@@ -137,7 +137,7 @@ function WindowRow({ source, selected, onSelect, ctx }) {
   return jsx(SourceRow, { source, selected, onSelect, preview })
 }
 
-function ContinuousVisionPane({ ctx }) {
+function PeripheralVisionPane({ ctx }) {
   const queryClient = useQueryClient()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [chosen, setChosen] = useState(null)
@@ -159,7 +159,7 @@ function ContinuousVisionPane({ ctx }) {
   })
   const data = status.data || {}
   const running = Boolean(data.running)
-  // The chat on screen — continuous vision describes frames with ITS model.
+  // The chat on screen — peripheral vision describes frames with ITS model.
   const focusedSessionId = useValue(host.state.focusedSessionId)
   const activeSessionId = useValue(host.state.activeSessionId)
   const liveSessionId = focusedSessionId || activeSessionId
@@ -211,7 +211,7 @@ function ContinuousVisionPane({ ctx }) {
         setError(result.error || 'could not start')
       } else {
         setPickerOpen(false)
-        host.notify({ kind: 'info', message: `Continuous vision → ${chosen.label}` })
+        host.notify({ kind: 'info', message: `Peripheral vision → ${chosen.label}` })
       }
     } catch (err) {
       setError(String((err && err.message) || err))
@@ -245,7 +245,7 @@ function ContinuousVisionPane({ ctx }) {
     setError('')
     try {
       await ctx.rest('/vision', { method: 'POST', body: { provider, model } })
-      host.notify({ kind: 'info', message: `Continuous vision → ${model}` })
+      host.notify({ kind: 'info', message: `Peripheral vision → ${model}` })
       await queryClient.invalidateQueries({ queryKey: [ID, 'vision'] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'status'] })
     } catch (err) {
@@ -281,7 +281,7 @@ function ContinuousVisionPane({ ctx }) {
         children: [
           jsx('div', {
             className: 'font-medium',
-            children: 'Continuous Vision'
+            children: 'Peripheral Vision'
           }),
           running
             ? jsxs('span', {
@@ -656,13 +656,13 @@ function ContinuousVisionPane({ ctx }) {
 // ---------------------------------------------------------------------------
 
 const CHIP_CSS = `
-.hermes-cv-chip{gap:4px;padding:0 4px;font-size:0.6875rem;line-height:1;color:var(--ui-text-tertiary)}
-.hermes-cv-chip:hover{color:var(--ui-text-primary)}
-.hermes-cv-chip.is-live{color:var(--ui-accent)}
-.hermes-cv-chip.is-open{color:var(--ui-text-primary)}
-.hermes-cv-chip-icon{display:flex;align-items:center;justify-content:center;width:12px;height:12px;flex-shrink:0;overflow:hidden}
-.hermes-cv-chip-icon svg{width:12px;height:12px}
-.hermes-cv-chip-label{white-space:nowrap;font-variant-numeric:tabular-nums}
+.hermes-pv-chip{gap:4px;padding:0 4px;font-size:0.6875rem;line-height:1;color:var(--ui-text-tertiary)}
+.hermes-pv-chip:hover{color:var(--ui-text-primary)}
+.hermes-pv-chip.is-live{color:var(--ui-accent)}
+.hermes-pv-chip.is-open{color:var(--ui-text-primary)}
+.hermes-pv-chip-icon{display:flex;align-items:center;justify-content:center;width:12px;height:12px;flex-shrink:0;overflow:hidden}
+.hermes-pv-chip-icon svg{width:12px;height:12px}
+.hermes-pv-chip-label{white-space:nowrap;font-variant-numeric:tabular-nums}
 `
 
 function VisionChip({ ctx }) {
@@ -693,24 +693,24 @@ function VisionChip({ ctx }) {
   // The pane frame's own Close is NOT the pair for revealPane: for a plugin that
   // contributes a single pane it calls closeTreePane -> setPluginEnabled(false),
   // which unregisters the whole plugin and takes this chip down with it (the app
-  // toasts "Plugin "continuous-vision" disabled" and sends the user to
+  // toasts "Plugin "peripheral-vision" disabled" and sends the user to
   // Capabilities → Plugins). So the chip asks for the dismiss half explicitly,
   // feature-detected: without it the click stays "bring the pane forward" and
   // nothing regresses on a desktop that predates it.
   const canHide = typeof host.dismissPane === 'function'
   const verb = open ? (canHide ? 'hide the pane' : 'bring the pane forward') : 'open the pane'
   const title = running
-    ? `Continuous Vision — ${detail}, ${data.count || 0} described, ${data.skipped || 0} unchanged. Click to ${verb}.`
-    : `Continuous Vision is off — click to ${verb}.`
+    ? `Peripheral Vision — ${detail}, ${data.count || 0} described, ${data.skipped || 0} unchanged. Click to ${verb}.`
+    : `Peripheral Vision is off — click to ${verb}.`
 
   return jsx(Tip, {
     label: title,
     children: jsxs(Button, {
       variant: 'ghost',
       size: 'micro',
-      className: `hermes-cv-chip${running ? ' is-live' : ''}${open ? ' is-open' : ''}`,
+      className: `hermes-pv-chip${running ? ' is-live' : ''}${open ? ' is-open' : ''}`,
       'aria-label': title,
-      'data-cv-state': running ? (data.source_missing || data.waiting ? 'waiting' : 'live') : 'off',
+      'data-pv-state': running ? (data.source_missing || data.waiting ? 'waiting' : 'live') : 'off',
       onClick: () => {
         haptic('tap')
         // The toggle: dismiss when it is on screen, reveal when it is away.
@@ -727,12 +727,12 @@ function VisionChip({ ctx }) {
         if (typeof host.revealPane === 'function') {
           host.revealPane(PANE_ID)
         } else {
-          host.notify({ kind: 'info', message: 'Continuous Vision — open the pane from the layout menu' })
+          host.notify({ kind: 'info', message: 'Peripheral Vision — open the pane from the layout menu' })
         }
       },
       children: [
-        jsx('span', { className: 'hermes-cv-chip-icon', children: jsx(running ? icons.Eye : icons.EyeOff, {}) }),
-        jsx('span', { className: 'hermes-cv-chip-label', children: label })
+        jsx('span', { className: 'hermes-pv-chip-icon', children: jsx(running ? icons.Eye : icons.EyeOff, {}) }),
+        jsx('span', { className: 'hermes-pv-chip-label', children: label })
       ]
     })
   })
@@ -740,7 +740,7 @@ function VisionChip({ ctx }) {
 
 export default {
   id: ID,
-  name: 'Continuous Vision',
+  name: 'Peripheral Vision',
   // Opt-in on purpose: this plugin captures screen content and camera frames, so it ships
   // off and the user turns it on in Settings → Plugins. An explicit user choice always wins
   // over this default (contrib/plugins-store.ts), so enabling it once stays enabled.
@@ -753,9 +753,9 @@ export default {
     ctx.register({
       id: 'pane',
       area: 'panes',
-      title: 'Continuous Vision',
+      title: 'Peripheral Vision',
       data: { placement: 'right', width: '270px' },
-      render: () => jsx(ContinuousVisionPane, { ctx })
+      render: () => jsx(PeripheralVisionPane, { ctx })
     })
     ctx.register({
       id: 'chip',
