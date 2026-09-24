@@ -24,6 +24,10 @@ def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(cv, "_STATE_DIR", tmp_path)
     monkeypatch.setattr(cv, "_STATUS", tmp_path / "status.json")
     monkeypatch.setattr(cv, "_STOP_REQUEST", tmp_path / "stop_request")
+    monkeypatch.delenv(cv.INJECT_MODE_ENV, raising=False)
+    # The default mode remembers what it last sent — module state that must not leak between
+    # tests, or two cases injecting the same description would look like a repeat to the second.
+    cv.reset_injection_state()
     return tmp_path
 
 

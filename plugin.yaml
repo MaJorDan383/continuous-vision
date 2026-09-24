@@ -7,7 +7,7 @@ description: >-
   inject the freshest descriptions into the conversation as context.
 license: "MIT"
 author: "MaJorDan"
-repository: "https://github.com/MaJorDan383/continuous-vision"
+homepage: "https://github.com/MaJorDan383/continuous-vision"
 platforms: ["windows"]
 # Verified against this version, and the backend imports private Hermes modules
 # (agent.image_routing, agent.opencode_affinity, ...) that older trees do not have — so fail

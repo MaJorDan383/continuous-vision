@@ -8,7 +8,7 @@ Continuous Vision is a Hermes plugin that keeps a live view of your screen, wind
 - **Window capture** — captures specific applications by window handle
 - **Camera capture** — enumerates cameras (DSHOW) and grabs frames
 - **Vision routing** — sends frames to the configured vision model automatically
-- **Pre-LLM context injection** — adds live descriptions to every assistant response via the `pre_llm_call` hook
+- **Pre-LLM context injection** — adds live descriptions to a turn through the `pre_llm_call` hook, gated by `CV_VISION_INJECT_MODE` so a screen that has not moved does not pay for itself on every turn
 - **Desktop pane** — shows a live preview with monitor/window/camera picker, vision model candidates, and pin support
 
 ## Installation
@@ -40,6 +40,20 @@ cp -r continuous-vision/ "$LOCALAPPDATA/hermes/plugins/continuous-vision/"
 
 If you run Hermes with a custom `HERMES_HOME`, use `$HERMES_HOME/plugins/continuous-vision` instead.
 
+### Enable it
+
+Hermes loads a **standalone** plugin only when its key is listed under `plugins.enabled`, so a
+directory you copied in stays inert — no capture, no context injection — until you say so:
+
+```bash
+hermes plugins enable continuous-vision
+```
+
+`hermes plugins list` shows the state (`hermes plugins show continuous-vision` for details), and
+`hermes plugins disable continuous-vision` turns it off again without deleting anything.
+Installing through the CLI (`hermes plugins install MaJorDan383/continuous-vision`) enables it for
+you.
+
 ## Configuration
 
 The plugin reads environment variables for tuning. They are read from the process that runs
@@ -54,6 +68,7 @@ the Hermes backend (the desktop app inherits your user environment):
 | `CV_VISION_MAX_WIDTH` | `1024` | Older alias for the edge cap, and the width cap on the watch's own frames |
 | `CV_VISION_SQUARE` | _(unset)_ | Force a square intake (auto-enabled for CLIP-style encoders) |
 | `CV_VISION_PROMPT` | _(built-in)_ | Prompt sent with each frame for description |
+| `CV_VISION_INJECT_MODE` | `on_change` | When a fresh reading rides a turn — see [Injection modes](#injection-modes) |
 | `CV_PREVIEW_MAX_AGE_S` | `6.0` | How stale the frame behind the pane preview may get while nothing moves (matches the pane's own 6s poll) |
 | `CV_SOURCE_FAILURE_LIMIT` | `3` | Consecutive capture failures before the watch stops |
 | `CV_CAMERA_MAX_INDEX` | `4` | Highest DirectShow camera index to probe |
@@ -77,8 +92,29 @@ choose a display, window, or camera in the desktop pane. The pane shows:
 5. **Pin button** — lock a specific vision model for the session
 6. **Status** — live status of the capture engine, frame count, source info
 
-Once a source is selected, descriptions are injected into Hermes context before each response,
-giving the assistant a live view of your screen.
+Once a source is selected, descriptions are injected into Hermes context before a response,
+giving the assistant a live view of your screen. How often is yours to decide:
+
+### Injection modes
+
+Set `CV_VISION_INJECT_MODE` in the environment that runs the Hermes backend and restart it. The
+mode is read on every turn, so one restart applies it to every session.
+
+| Mode | What rides a turn |
+|------|-------------------|
+| `on_change` *(default)* | Only when the reading differs from the last one sent in that session — plus a re-send of unchanged content every 10 minutes, so a screen that never moves is still re-anchored instead of going silent for the rest of a long session |
+| `always` | Every turn while the reading is fresh (what the plugin did before modes existed) |
+| `on_mention` | Only when your own message points at the screen — `screen`, `monitor`, `display`, `desktop`, `what do you see`, `can you see`, `look at`, `see this`, `this window`, `visible` (the full list is `MENTION_PATTERNS` in `__init__.py`, kept narrow on purpose: firing on the word "window" in "open a new window" costs tokens on a turn that never needed eyes) |
+| `tool_only` | Never ambient — reserved for builds that expose a live-view *tool*. This plugin registers no such tool, so the model is told nothing and the plugin logs a warning rather than looking like a silent failure |
+
+Every mode keeps the same two hard gates: the capture loop must be running **and** the newest
+frame must have arrived within the last 90 seconds (a stale description is misleading, so it is
+never injected). The block is capped at 1200 characters and 3 descriptions. An unrecognised
+value logs a warning once and falls back to `on_change`.
+
+`on_change` compares the descriptions themselves, not the whole block: the header states the
+frame's age, which changes every turn, so a whole-text comparison would never match and the mode
+would save nothing.
 
 ## Security & Privacy
 
@@ -97,6 +133,11 @@ This plugin captures screen content and enumerates window titles. Key facts:
   directory, `$HERMES_HOME/cache/continuous-vision/` (default `~/.hermes/cache/continuous-vision/`,
   where `status.json`, `vision_model.json` and `stop_request` also live). Delete `log.jsonl` to
   clear that history.
+- **An injected description also becomes part of the session transcript.** The block rides the
+  turn's user message, and the host stores the exact bytes sent to the model in the session
+  database (the `api_content` sidecar, kept so a replay matches what the model saw). Deleting
+  `log.jsonl` clears the plugin's own log; it does not remove the copies already recorded in your
+  sessions.
 - **Frames leave this machine.** Each changed frame is encoded and sent to whichever
   vision-capable model the live session is running, with the built-in prompt. On a cloud
   provider that is a third-party API. Nothing is captured or sent while no source is selected,
@@ -104,8 +145,9 @@ This plugin captures screen content and enumerates window titles. Key facts:
 - **Every described frame is a model call** — billed and rate-limited like any other call on
   that model. A busy screen at a short interval can mean hundreds of calls an hour; raise the
   interval or pin a cheaper vision model if that matters to you.
-- **A watching session costs more tokens per turn.** While the watch is running and the newest
-  description is under 90 seconds old, up to ~1200 characters are injected into the turn.
+- **A watching turn can cost more tokens.** While the watch is running and the newest
+  description is under 90 seconds old, up to ~1200 characters are eligible for injection — and
+  with the default `on_change` mode that happens once per changed reading, not once per turn.
 
 ## Language of descriptions
 
