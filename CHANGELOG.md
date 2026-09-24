@@ -3,6 +3,15 @@
 All notable changes to this plugin. Nothing before the first public release was published, so
 `1.0.0` covers the whole plugin as shipped.
 
+## [1.1.0] - 2026-09-23
+
+### Added
+- **A vision-mode picker in the pane, beside the source button.** The source picker now
+  shows one kind at a time — Displays, Windows or Cameras — and the new select next to
+  "Choose source…" decides which kind it lists. While a watch is up the select mirrors the
+  kind being watched (read from the backend, with a fallback for older backends); picking a
+  source re-syncs it to the watch that starts.
+
 ## [1.0.2] - 2026-09-23
 
 ### Changed
