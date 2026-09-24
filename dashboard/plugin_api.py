@@ -1767,6 +1767,39 @@ def _save_inject_mode(mode: str) -> None:
         pass
 
 
+# How often the watch checks for changes. The pane's pick persists in this file (plain
+# one-line text, atomic swap, same reason as the inject-mode pick); 0 means MANUAL —
+# nothing is checked on a rhythm and the pane offers two snapshot buttons instead.
+INTERVAL_PATH = STATE_DIR / "interval"
+
+
+def _normalize_interval(raw: Any) -> int:
+    """A rhythm in ms the engine can run — 0 (manual) or 500..600000; -1 when invalid."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return -1
+    return value if value == 0 or 500 <= value <= 600_000 else -1
+
+
+def _save_interval(ms: int) -> None:
+    """Persist the pane's rhythm pick (a bare integer, ms; 0 = manual)."""
+    _write_text_atomic(INTERVAL_PATH, f"{int(ms)}\n")
+
+
+def _interval_state(running: bool) -> dict[str, Any]:
+    """The rhythm the watch checks at, and where that choice comes from (0 = manual)."""
+    if running:
+        return {"ms": int(getattr(ENGINE, "interval_ms", DEFAULT_INTERVAL_MS)), "source": "engine"}
+    try:
+        from_file = _normalize_interval(INTERVAL_PATH.read_text(encoding="utf-8").strip())
+    except OSError:
+        from_file = -1
+    if from_file >= 0:
+        return {"ms": from_file, "source": "pane"}
+    return {"ms": DEFAULT_INTERVAL_MS, "source": "default"}
+
+
 def _route(session_id: str = "") -> dict[str, Any]:
     """Resolve the model that describes frames.
 
@@ -2240,6 +2273,10 @@ class _Engine:
         ``session_id`` is the live chat the pane is looking at: frames are described
         by THAT session's model, not by the profile default in ``config.yaml``.
         """
+        # A snapshot session holding another camera would fight this watch over the
+        # module's single _CAM_HANDLE; end it first (an open overlay reports the
+        # session expired on its next frame). Backends without the feature: no-op.
+        _snap_reset()
         self.stop()
         _WATCH_SESSION["id"] = str(session_id or "")
         route = _route()
@@ -2259,7 +2296,10 @@ class _Engine:
         self._stop = threading.Event()
         with self._lock:
             self.monitor = source
-            self.interval_ms = max(500, int(interval_ms))
+            requested = int(interval_ms)
+            # 0 = manual: the loop idles (heartbeat only) and the pane's snapshot
+            # buttons are the capture path; anything else is a checking rhythm.
+            self.interval_ms = max(500, requested) if requested > 0 else 0
             self.threshold = min(100.0, max(0.0, float(threshold)))
             self.count = 0
             self.skipped = 0
@@ -2296,6 +2336,19 @@ class _Engine:
         _write_json(STATUS_PATH, {**self.status(), "v": 1})
         return self.status()
 
+    def set_interval(self, interval_ms: int) -> int:
+        """Apply a rhythm (0 = manual) to a running loop; the route persists it.
+
+        The loop re-reads ``interval_ms`` every iteration and _run's manual branch
+        takes over the moment it reaches 0, so a pick lands within one tick — no
+        restart of anything, and harmless when this is called while stopped.
+        """
+        requested = int(interval_ms)
+        with self._lock:
+            self.interval_ms = max(500, requested) if requested > 0 else 0
+        self._publish()
+        return self.interval_ms
+
     # -- loop -------------------------------------------------------------
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -2307,6 +2360,14 @@ class _Engine:
                 _append_log({"ts": time.time(), "event": "stop_requested"})
                 self._stop.set()
                 break
+            if self.interval_ms <= 0:
+                # Manual: no checking rhythm — the pane's snapshot buttons capture on
+                # demand. The loop breathes so /status stays live (heartbeat) and the
+                # unload request above is never missed.
+                if self.heartbeat_at is None or (time.time() - self.heartbeat_at) >= 2.0:
+                    self._publish()
+                self._stop.wait(0.25)
+                continue
             started = time.time()
             try:
                 try:
@@ -2463,6 +2524,155 @@ def _recent(limit: int = 12) -> list[dict[str, Any]]:
 ENGINE = _Engine()
 
 
+# ── Manual snapshots ─────────────────────────────────────────────────────
+# The pane's "manual" rhythm grows two snapshot buttons: one hands a camera feed
+# to a drag-crop overlay, the other any display/window. A session keeps live frames
+# coming; /snap saves the crop as a PNG AND returns it base64, and the pane stages
+# it into the chat input through the app's own paste route — the whole feature is
+# plugin-side (no desktop change, no clipboard takeover).
+SNAP_TTL_S = 120.0  # an idle session this long is gone (its camera must not stay held)
+SNAP_PREVIEW_WIDTH = 960  # the overlay's feed; the SNAP itself is full resolution
+SNAP_DIR = STATE_DIR / "snaps"
+
+_SNAP: dict[str, Any] = {"id": "", "source": None, "at": 0.0, "opened_camera": False, "frames": 0}
+
+
+def _snap_reset(release: bool = True) -> None:
+    """End any live snapshot session; release the camera only when IT opened the device.
+
+    The shared _CAM_HANDLE may belong to the watch (same camera — reads serialize
+    under _CAM_LOCK); releasing that would blind the watch mid-frame, so the release
+    is conditional on this session having opened the device itself.
+    """
+    held = bool(_SNAP.get("opened_camera"))
+    _SNAP.update({"id": "", "source": None, "at": 0.0, "opened_camera": False, "frames": 0})
+    if release and held:
+        release_camera()
+
+
+def _reap_snap_if_stale() -> None:
+    """Stop holding a camera for a pane that went away (its /snap/stop never came).
+
+    Woken by the pane/chip poll: a killed overlay leaves no other trace, and an
+    unreleased camera means the LED stays on. Runs on a thread.
+    """
+    if _SNAP.get("id") and (time.time() - float(_SNAP.get("at") or 0)) > SNAP_TTL_S + 15:
+        _snap_reset()
+
+
+def _snap_camera_busy_reason(source: dict[str, Any]) -> str:
+    """Why a snapshot may not open this camera right now ('' = allowed).
+
+    There is ONE _CAM_HANDLE: while the watch holds a DIFFERENT camera, a snapshot
+    that opened this one would swap the handle back and forth every frame (each swap
+    is a device reset). Sharing the SAME camera is safe — every read is inside
+    _CAM_LOCK.
+    """
+    thread = getattr(ENGINE, "_thread", None)
+    if thread is None or not thread.is_alive():
+        return ""
+    watched = ENGINE.monitor or {}
+    if watched.get("kind") != "camera":
+        return ""
+    if int(watched.get("index") or 0) == int(source.get("index") or 0):
+        return ""
+    return (
+        f"camera {source.get('index')} cannot be opened while camera {watched.get('index')} "
+        "is being watched — snapshot from the watched camera, or stop the watch"
+    )
+
+
+def _snap_source_summary(source: dict[str, Any]) -> dict[str, Any]:
+    """The bits of a source the pane's overlay needs (label for the dialog title)."""
+    return {
+        "id": source.get("id"),
+        "label": source.get("label"),
+        "kind": source.get("kind"),
+        "width": source.get("width"),
+        "height": source.get("height"),
+    }
+
+
+def _snap_frame_payload() -> dict[str, Any]:
+    """One fresh JPEG frame of the active session for the crop overlay (thread caller)."""
+    if not _SNAP.get("id"):
+        return {"ok": False, "error": "no snapshot session — reopen the snapshot"}
+    source = _SNAP.get("source") or {}
+    _SNAP["at"] = time.time()  # the idle TTL counts from the last frame the pane asked for
+    had_camera = _CAM_HANDLE.get("cap") is not None
+    try:
+        img = _grab(source)
+    except (_SourceGone, _SourceMinimized) as exc:  # waiting states, not failures
+        return {"ok": False, "error": str(exc)[:300], "waiting": True}
+    except Exception as exc:  # the pane shows the reason verbatim
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
+    if source.get("kind") == "camera" and not had_camera and _CAM_HANDLE.get("cap") is not None:
+        _SNAP["opened_camera"] = True  # this session opened the device: it must release it
+    _SNAP["frames"] = int(_SNAP.get("frames") or 0) + 1
+    shot, out_w, out_h = _wire_jpeg(img, SNAP_PREVIEW_WIDTH)
+    return {
+        "ok": True,
+        "width": out_w,
+        "height": out_h,
+        "method": _grab_method() or None,
+        "waiting": _grab_waiting() or None,
+        "data_url": "data:image/jpeg;base64," + base64.b64encode(shot).decode("ascii"),
+    }
+
+
+def _crop_normalized(img: Any, rect: Any) -> Any:
+    """Crop ``img`` by the pane's selection — {x,y,w,h} as fractions of the frame.
+
+    Anything unusable (missing rect, degenerate size) crops nothing: the whole frame
+    is the sane default, never a crash.
+    """
+    if not isinstance(rect, dict):
+        return img
+    width, height = img.size[:2]
+    if not width or not height:
+        return img
+    try:
+        x = min(max(0.0, float(rect.get("x"))), 1.0)
+        y = min(max(0.0, float(rect.get("y"))), 1.0)
+        w = min(max(0.0, float(rect.get("w"))), 1.0)
+        h = min(max(0.0, float(rect.get("h"))), 1.0)
+    except (TypeError, ValueError):
+        return img
+    if w < 0.005 or h < 0.005:
+        return img
+    left = min(int(round(x * width)), width - 1)
+    top = min(int(round(y * height)), height - 1)
+    right = max(left + 1, min(int(round((x + w) * width)), width))
+    bottom = max(top + 1, min(int(round((y + h) * height)), height))
+    return img.crop((left, top, right, bottom))
+
+
+def _snap_save(rect: Any) -> dict[str, Any]:
+    """A fresh full-resolution frame, cropped by ``rect``, saved as PNG (thread caller).
+
+    The base64 twin rides back to the pane so it can stage the image into the chat
+    input; the file on disk is the same pixels, there for dragging in or keeping.
+    """
+    img = _grab(_SNAP.get("source") or {})
+    img = _crop_normalized(img, rect)
+    SNAP_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"snap-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}.png"
+    path = SNAP_DIR / name
+    data = _png_bytes(img)
+    tmp = path.with_name(f"{name}.{os.getpid()}.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+    return {
+        "ok": True,
+        "name": name,
+        "path": str(path),
+        "width": img.size[0],
+        "height": img.size[1],
+        "bytes": len(data),
+        "png_b64": base64.b64encode(data).decode("ascii"),
+    }
+
+
 # ── Routes ────────────────────────────────────────────────────────────────
 @router.get("/monitors")
 async def get_monitors() -> dict[str, Any]:
@@ -2530,12 +2740,22 @@ def reconcile_stale_status() -> Optional[dict[str, Any]]:
 
 @router.get("/status")
 async def get_status() -> dict[str, Any]:
-    """Engine state, the intake the frames are sized for, and the inject-mode pick."""
+    """Engine state, the intake, the inject-mode pick, and the checking rhythm."""
+    engine_status = ENGINE.status()
     # A snapshot request is also the moment to heal a file left by a backend that died: in-process
     # `running` is authoritative here, but whatever reads the file from outside is not.
-    if not ENGINE.status().get("running"):
+    if not engine_status.get("running"):
         reconcile_stale_status()
-    return {**ENGINE.status(), "intake": _watch_intake(), "inject_mode": _inject_mode_state()}
+    # The snapshot session's janitor: a killed overlay leaves no /snap/stop, and an
+    # unreleased camera means the LED stays on — this poll is the waking call.
+    await asyncio.to_thread(_reap_snap_if_stale)
+    return {
+        **engine_status,
+        "intake": _watch_intake(),
+        "inject_mode": _inject_mode_state(),
+        "interval": _interval_state(engine_status.get("running")),
+        "snap": True,
+    }
 
 
 @router.get("/vision")
@@ -2628,6 +2848,108 @@ async def post_inject_mode(payload: dict[str, Any] = Body(default={})) -> dict[s
     except OSError as exc:
         return {"ok": False, "error": f"could not persist the inject mode: {exc}"}
     return {"ok": True, "inject_mode": _inject_mode_state()}
+
+
+@router.post("/interval")
+async def post_interval(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Pick how often the watch checks for changes; 0 is manual (snapshot only).
+
+    Persisted for the next watch and applied to a running one within a tick — the
+    loop re-reads ``interval_ms`` every iteration. Manual stops the checking rhythm
+    but not the watch: the pane's snapshot buttons capture on demand.
+    """
+    ms = _normalize_interval(payload.get("interval_ms"))
+    if ms < 0:
+        return {"ok": False, "error": "interval_ms must be 0 (manual) or 500–600000"}
+    try:
+        _save_interval(ms)
+    except OSError as exc:
+        return {"ok": False, "error": f"could not persist the interval: {exc}"}
+    await asyncio.to_thread(ENGINE.set_interval, ms)
+    return {"ok": True, "interval": _interval_state(ENGINE.status().get("running"))}
+
+
+@router.post("/snap/start")
+async def post_snap_start(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Open a snapshot session: live frames of ONE source for the pane's crop overlay.
+
+    Resolution mirrors /start (no enumeration for a camera id); a camera already
+    watched by the engine may be shared, but a DIFFERENT one is refused rather than
+    thrashing the single device handle. ``source_id`` is mandatory.
+    """
+    source_id = str(payload.get("source_id") or "").strip()
+    if not source_id:
+        return {"ok": False, "error": "source_id is required — pick a source to snapshot."}
+    chosen = _source_from_id(source_id)
+    if chosen is None and not source_id.startswith(("camera-", "default-camera")):
+        sources = await asyncio.to_thread(list_sources)
+        available = sources["monitors"] + sources["windows"] + sources["cameras"]
+        chosen = next((s for s in available if s["id"] == source_id), None)
+        if chosen is None and source_id.isdigit():
+            idx = int(source_id)
+            chosen = next((s for s in available if s.get("index") == idx), None)
+    if chosen is None:
+        return {"ok": False, "error": f"unknown source_id {source_id!r} — refresh the list."}
+    if (chosen.get("kind") or "") == "camera":
+        busy = _snap_camera_busy_reason(chosen)
+        if busy:
+            return {"ok": False, "error": busy}
+        abort_camera_probe()  # the pick outranks a probe, same as /start
+    _snap_reset()  # one session at a time; ends any previous one cleanly
+    _SNAP.update(
+        {"id": uuid.uuid4().hex[:12], "source": chosen, "at": time.time(), "opened_camera": False, "frames": 0}
+    )
+    frame = await asyncio.to_thread(_snap_frame_payload)
+    if not frame.get("ok"):
+        _snap_reset()
+        return {"ok": False, "error": frame.get("error") or "could not grab a frame"}
+    return {"ok": True, "session_id": _SNAP["id"], "frame": frame, "source": _snap_source_summary(chosen)}
+
+
+@router.get("/snap/frame")
+async def get_snap_frame(session_id: str = "") -> dict[str, Any]:
+    """One fresh frame of an open snapshot session (the overlay polls this)."""
+    if not session_id or session_id != _SNAP.get("id"):
+        return {"ok": False, "error": "snapshot session not found — reopen the snapshot"}
+    if time.time() - float(_SNAP.get("at") or 0) > SNAP_TTL_S:
+        await asyncio.to_thread(_snap_reset)
+        return {"ok": False, "error": "snapshot session expired"}
+    return await asyncio.to_thread(_snap_frame_payload)
+
+
+@router.post("/snap")
+async def post_snap(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Save the session's current frame — cropped when ``rect`` is given — as a PNG.
+
+    The crop runs at FULL resolution (the overlay's feed is only a preview), and the
+    base64 twin in the response is what the pane stages into the chat input. The
+    session stays open so one live view can yield several crops.
+    """
+    session_id = str(payload.get("session_id") or "")
+    if not session_id or session_id != _SNAP.get("id"):
+        return {"ok": False, "error": "snapshot session not found — reopen the snapshot"}
+    if time.time() - float(_SNAP.get("at") or 0) > SNAP_TTL_S:
+        await asyncio.to_thread(_snap_reset)
+        return {"ok": False, "error": "snapshot session expired"}
+    try:
+        return await asyncio.to_thread(_snap_save, payload.get("rect"))
+    except (_SourceGone, _SourceMinimized) as exc:
+        return {"ok": False, "error": str(exc)[:300], "waiting": True}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
+
+
+@router.post("/snap/stop")
+async def post_snap_stop(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """End a snapshot session and let its camera go (lights off) if it opened one.
+
+    A stale id is a no-op — a dying overlay must not close a session that replaced it.
+    """
+    session_id = str(payload.get("session_id") or "")
+    if session_id and _SNAP.get("id") and session_id != _SNAP.get("id"):
+        return {"ok": True, "ended": False}
+    await asyncio.to_thread(_snap_reset)
+    return {"ok": True, "ended": True}
 
 
 @router.get("/preview")

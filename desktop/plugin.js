@@ -12,6 +12,13 @@
  * turn — no restart. That pick outranks PV_VISION_INJECT_MODE, which outranks the
  * built-in default.
  *
+ * When "check for changes" is set to manual, the backend checks nothing on its own and a
+ * snapshot row appears: a camera button and a cropping-rectangle button. Each pops the
+ * matching source list (cameras; displays and windows), opens a live view, and the drag
+ * selection is saved to disk and staged into the chat INPUT through the app's own paste
+ * route — a synthetic paste the composer cannot tell from ⌘V, so no desktop change and no
+ * clipboard takeover is involved.
+ *
  * Backend: /api/plugins/peripheral-vision/* (dashboard/plugin_api.py).
  *
  * Plain ESM, loaded uncompiled — UI is jsx() calls, not JSX syntax.
@@ -22,12 +29,18 @@ import {
   atom,
   Button,
   cn,
+  Codicon,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   GlyphSpinner,
   haptic,
   host,
@@ -42,7 +55,7 @@ import {
   useQueryClient,
   useValue
 } from '@hermes/plugin-sdk'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'peripheral-vision'
@@ -57,7 +70,8 @@ const INTERVALS = [
   { value: '1000', label: 'every 1s' },
   { value: '2000', label: 'every 2s' },
   { value: '5000', label: 'every 5s' },
-  { value: '10000', label: 'every 10s' }
+  { value: '10000', label: 'every 10s' },
+  { value: '0', label: 'manual' }
 ]
 
 // The three kinds of vision this plugin can run - one section of the source picker
@@ -178,11 +192,147 @@ function WindowRow({ source, selected, onSelect, ctx }) {
   return jsx(SourceRow, { source, selected, onSelect, preview })
 }
 
+// ---------------------------------------------------------------------------
+// Manual snapshots — the two buttons under "check for changes" when its pick is
+// "manual". One lists cameras, the other displays + application windows; picking a
+// source opens a live-view overlay whose drag selection becomes the still.
+// ---------------------------------------------------------------------------
+
+const clamp01 = value => Math.max(0, Math.min(1, value))
+const pctOf = value => `${(value * 100).toFixed(3)}%`
+
+// Hand the cropped PNG to the chat input. The app routes an unfocused paste landing
+// on non-editable chrome into the active composer (attaching image blobs and focusing
+// it) — the "paste-to-focus" twin of type-to-focus — so a synthetic paste event
+// carrying the file rides exactly the user's ⌘V path. That is the whole attach:
+// no desktop API, no clipboard takeover. `defaultPrevented` on the event is the
+// app's own receipt that it routed; false means a surface blocked it (a dialog still
+// animating out, the terminal pane, a full-page view) and the caller says so instead
+// of pretending.
+function dispatchPasteToComposer(pngBase64, name) {
+  const bin = atob(pngBase64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+  const dataTransfer = new DataTransfer()
+  dataTransfer.items.add(new File([bytes], name, { type: 'image/png' }))
+  let event
+  try {
+    event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dataTransfer })
+  } catch (err) {
+    event = new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+  }
+  if (!event.clipboardData) {
+    try {
+      Object.defineProperty(event, 'clipboardData', { value: dataTransfer })
+    } catch (err) {
+      /* the app's clipboardData guard will refuse it; the caller tells the truth */
+    }
+  }
+  window.dispatchEvent(event)
+  return event.defaultPrevented === true
+}
+
+function SnapMenu({ ctx, sources, kind, disabled, onPick }) {
+  const data = (sources && sources.data) || {}
+  const camera = kind === 'cameras'
+  const cameras = camera ? data.cameras || [] : []
+  const monitors = camera ? [] : data.monitors || []
+  const windows = camera ? [] : data.windows || []
+  const empty = camera
+    ? data.cameras_probing
+      ? 'scanning for cameras…'
+      : 'No camera was detected.'
+    : 'No display or window was found.'
+  const rows = []
+  const header = text =>
+    rows.push(
+      jsx(
+        'div',
+        {
+          className:
+            'px-2 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-(--ui-text-tertiary)',
+          children: text
+        },
+        `pv-snap-${text}`
+      )
+    )
+  const item = source =>
+    rows.push(
+      jsxs(
+        DropdownMenuItem,
+        {
+          onSelect: () => onPick(source),
+          children: [
+            jsx('span', { children: source.label }),
+            jsx('span', {
+              className: 'text-(--ui-text-quaternary)',
+              children: ` · ${source.width}×${source.height}${source.minimized ? ' · minimized' : ''}`
+            })
+          ]
+        },
+        source.id
+      )
+    )
+  if (camera) {
+    header('Cameras')
+    cameras.forEach(item)
+  } else {
+    if (monitors.length) {
+      header('Displays')
+      monitors.forEach(item)
+    }
+    if (windows.length) {
+      header('Application windows')
+      windows.forEach(item)
+    }
+  }
+  if (!cameras.length && !monitors.length && !windows.length) {
+    rows.push(jsx(DropdownMenuItem, { disabled: true, children: empty }, 'pv-snap-empty'))
+  }
+  return jsx(DropdownMenu, {
+    children: [
+      jsx(Tip, {
+        label: camera
+          ? 'Snapshot from a camera — pick one, then drag a crop'
+          : 'Drag-and-crop a screenshot — pick a display or window first',
+        children: jsx(DropdownMenuTrigger, {
+          asChild: true,
+          children: jsx(Button, {
+            size: 'sm',
+            variant: 'ghost',
+            disabled,
+            className: 'h-6 w-7 p-0',
+            'aria-label': camera ? 'snapshot from a camera' : 'crop a screen area',
+            children: jsx(Codicon, { name: camera ? 'device-camera' : 'crop' })
+          })
+        })
+      }),
+      jsx(DropdownMenuContent, {
+        align: 'start',
+        className: 'max-h-80 w-72 overflow-y-auto',
+        children: [
+          ...rows,
+          jsx(DropdownMenuSeparator, {}, 'pv-snap-separator'),
+          jsx(
+            DropdownMenuItem,
+            {
+              onSelect: () => ctx.rest('/sources?refresh=1').then(() => sources.refetch()),
+              children: 'Refresh the list'
+            },
+            'pv-snap-refresh'
+          )
+        ]
+      })
+    ]
+  })
+}
+
 function PeripheralVisionPane({ ctx }) {
   const queryClient = useQueryClient()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [chosen, setChosen] = useState(null)
-  const [intervalMs, setIntervalMs] = useState('2000')
+  // The rhythm pick: optimistic while its POST is in flight; '0' is manual snapshots.
+  const [intervalPick, setIntervalPick] = useState('')
   // '' = follow whatever is being watched (Displays while idle); a pick pins the
   // scope for the NEXT source choice, and starting a watch re-syncs it (see start()).
   const [mode, setMode] = useState('')
@@ -192,6 +342,13 @@ function PeripheralVisionPane({ ctx }) {
   // The inject-mode pick: optimistic while the POST is in flight, then /status is the
   // authority (the same value the agent half's hook reads on the next turn).
   const [injectPick, setInjectPick] = useState('')
+  // The manual snapshot overlay: {session_id, label, kind} while it is up.
+  const [snap, setSnap] = useState(null)
+  const [snapSel, setSnapSel] = useState(null)
+  const [snapBusy, setSnapBusy] = useState(false)
+  const [snapError, setSnapError] = useState('')
+  const snapBoxRef = useRef(null)
+  const snapDragRef = useRef(null)
 
   const status = useQuery({
     queryKey: [ID, 'status'],
@@ -224,6 +381,12 @@ function PeripheralVisionPane({ ctx }) {
   const injectState = data.inject_mode || null
   const injectMode = injectPick || (injectState && injectState.mode) || 'on_change'
   const injectOrigin = injectPick ? 'pane' : (injectState && injectState.source) || 'default'
+  // The checking rhythm — pane pick > backend state > default; '0' = manual, which
+  // renders the snapshot row (only a backend that advertises `snap` can serve it).
+  const intervalState = data.interval || null
+  const intervalMs = intervalPick || (intervalState ? String(intervalState.ms) : '2000')
+  const manualMode = intervalMs === '0'
+  const snapshotsSupported = Boolean(data.snap)
   // The chat on screen — peripheral vision describes frames with ITS model.
   const focusedSessionId = useValue(host.state.focusedSessionId)
   const activeSessionId = useValue(host.state.activeSessionId)
@@ -234,6 +397,16 @@ function PeripheralVisionPane({ ctx }) {
     refetchInterval: running ? 6000 : false,
     enabled: running
   })
+  // The crop overlay's live feed (only while the overlay is open).
+  const snapFrame = useQuery({
+    queryKey: [ID, 'snapframe', snap ? snap.session_id : 'none'],
+    queryFn: () => ctx.rest(`/snap/frame?session_id=${encodeURIComponent(snap.session_id)}`),
+    enabled: Boolean(snap),
+    refetchInterval: snap ? 500 : false
+  })
+  const frameData = snapFrame.data || {}
+  const frameUrl = frameData.ok && frameData.data_url ? frameData.data_url : null
+  const frameNote = frameData.ok ? frameData.waiting || null : frameData.error || null
   // Which model describes frames, and whether that model can even see them.
   const vision = useQuery({
     queryKey: [ID, 'vision'],
@@ -322,6 +495,156 @@ function PeripheralVisionPane({ ctx }) {
     },
     [ctx, queryClient]
   )
+
+  // The interval pick (0 = manual): applied to a running watch within a tick and
+  // persisted for the next one — no restart anywhere.
+  const changeInterval = useCallback(
+    async value => {
+      haptic('tap')
+      setIntervalPick(value)
+      setError('')
+      try {
+        const result = await ctx.rest('/interval', { method: 'POST', body: { interval_ms: Number(value) } })
+        if (result && result.ok === false) {
+          setError(result.error || 'could not set the rhythm')
+          return
+        }
+        // Refetch first (same reason as the inject pick): no flash of the old value.
+        await queryClient.invalidateQueries({ queryKey: [ID, 'status'] })
+      } catch (err) {
+        setError(String((err && err.message) || err))
+      } finally {
+        setIntervalPick('')
+      }
+    },
+    [ctx, queryClient]
+  )
+
+  const openSnap = useCallback(
+    async source => {
+      haptic('tap')
+      setSnapError('')
+      setSnapSel(null)
+      setSnapBusy(true)
+      try {
+        const result = await ctx.rest('/snap/start', { method: 'POST', body: { source_id: source.id } })
+        if (!result || result.ok === false) {
+          setError((result && result.error) || 'could not open the snapshot')
+          return
+        }
+        setSnap({
+          session_id: result.session_id,
+          label: (result.source && result.source.label) || source.label,
+          kind: (result.source && result.source.kind) || source.kind || ''
+        })
+      } catch (err) {
+        setError(String((err && err.message) || err))
+      } finally {
+        setSnapBusy(false)
+      }
+    },
+    [ctx]
+  )
+
+  const stopSnap = useCallback(() => {
+    const held = snap
+    setSnap(null)
+    setSnapSel(null)
+    setSnapError('')
+    if (held && held.session_id) {
+      // Let the backend close the session (and its camera) — nothing waits for it.
+      ctx.rest('/snap/stop', { method: 'POST', body: { session_id: held.session_id } }).catch(() => {})
+    }
+  }, [ctx, snap])
+
+  const doSnap = useCallback(async () => {
+    if (!snap || snapBusy) {
+      return
+    }
+    setSnapBusy(true)
+    setSnapError('')
+    try {
+      const rect = snapSel && snapSel.w >= 0.005 && snapSel.h >= 0.005 ? snapSel : null
+      const result = await ctx.rest('/snap', { method: 'POST', body: { session_id: snap.session_id, rect } })
+      if (!result || result.ok === false) {
+        setSnapError((result && result.error) || 'the snapshot failed')
+        return
+      }
+      const held = snap
+      // Close the overlay FIRST: open dialogs block the app's paste router, so the
+      // hand-off waits for it to be gone (Radix exit animations included — hence a
+      // few attempts). `defaultPrevented` is the app's own receipt that it routed.
+      setSnap(null)
+      setSnapSel(null)
+      ctx.rest('/snap/stop', { method: 'POST', body: { session_id: held.session_id } }).catch(() => {})
+      let routed = false
+      for (let attempt = 0; attempt < 6 && !routed; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 60 : 140))
+        routed = dispatchPasteToComposer(result.png_b64, result.name || 'snapshot.png')
+      }
+      haptic('tap')
+      if (routed) {
+        host.notify({ kind: 'info', message: 'Peripheral Vision → snapshot added to the message input' })
+      } else {
+        host.notify({
+          kind: 'warning',
+          message: `Peripheral Vision — the input did not take it; the snapshot is saved at ${result.path}`
+        })
+      }
+    } catch (err) {
+      setSnapError(String((err && err.message) || err))
+    } finally {
+      setSnapBusy(false)
+    }
+  }, [ctx, snap, snapBusy, snapSel])
+
+  const onSnapPointerDown = useCallback(event => {
+    if (event.button !== 0) {
+      return
+    }
+    const box = snapBoxRef.current
+    if (!box) {
+      return
+    }
+    const rect = box.getBoundingClientRect()
+    if (!rect.width || !rect.height) {
+      return
+    }
+    snapDragRef.current = {
+      x: clamp01((event.clientX - rect.left) / rect.width),
+      y: clamp01((event.clientY - rect.top) / rect.height)
+    }
+    setSnapSel(null)
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch (err) {
+      /* pointer capture is a nicety: dragging still works without it */
+    }
+  }, [])
+
+  const onSnapPointerMove = useCallback(event => {
+    const start = snapDragRef.current
+    const box = snapBoxRef.current
+    if (!start || !box) {
+      return
+    }
+    const rect = box.getBoundingClientRect()
+    if (!rect.width || !rect.height) {
+      return
+    }
+    const x = clamp01((event.clientX - rect.left) / rect.width)
+    const y = clamp01((event.clientY - rect.top) / rect.height)
+    setSnapSel({
+      x: Math.min(start.x, x),
+      y: Math.min(start.y, y),
+      w: Math.abs(x - start.x),
+      h: Math.abs(y - start.y)
+    })
+  }, [])
+
+  const onSnapPointerUp = useCallback(() => {
+    snapDragRef.current = null
+  }, [])
 
   const usePinnedModel = useCallback(async () => {
     if (!pinChoice) {
@@ -429,20 +752,36 @@ function PeripheralVisionPane({ ctx }) {
         className: 'flex items-center gap-2 text-xs text-(--ui-text-tertiary)',
         children: [
           jsx('span', { children: 'check for changes' }),
-          jsx(Select, {
-            value: intervalMs,
-            onValueChange: setIntervalMs,
-            children: jsxs(SelectTrigger, {
-              className: 'h-6 w-28 text-xs',
-              children: [jsx(SelectValue, {}), jsx(SelectContent, {
-                children: INTERVALS.map(option =>
-                  jsx(SelectItem, { value: option.value, children: option.label }, option.value)
-                )
-              })]
+          jsx(Tip, {
+            label:
+              'How often the watch looks for changes. Manual checks nothing on its own — you snapshot on demand instead.',
+            children: jsx(Select, {
+              value: intervalMs,
+              onValueChange: changeInterval,
+              children: jsxs(SelectTrigger, {
+                className: 'h-6 w-28 text-xs',
+                'aria-label': 'check for changes',
+                children: [jsx(SelectValue, {}), jsx(SelectContent, {
+                  children: (snapshotsSupported ? INTERVALS : INTERVALS.filter(option => option.value !== '0')).map(option =>
+                    jsx(SelectItem, { value: option.value, children: option.label }, option.value)
+                  )
+                })]
+              })
             })
           })
         ]
       }),
+
+      manualMode && snapshotsSupported
+        ? jsxs('div', {
+            className: 'flex items-center gap-2 text-xs text-(--ui-text-tertiary)',
+            children: [
+              jsx('span', { children: 'snapshot' }),
+              jsx(SnapMenu, { ctx, sources, kind: 'cameras', disabled: busy || snapBusy, onPick: openSnap }),
+              jsx(SnapMenu, { ctx, sources, kind: 'screens', disabled: busy || snapBusy, onPick: openSnap })
+            ]
+          })
+        : null,
 
       injectState
         ? jsxs('div', {
@@ -804,7 +1143,93 @@ function PeripheralVisionPane({ ctx }) {
             ]
           })
         })
-      })
+      }),
+
+      // The live snapshot overlay: a feed of the chosen source with a drag-to-crop
+      // selection. Snap closes it first, then hands the PNG to the chat input.
+      snap
+        ? jsx(Dialog, {
+            open: true,
+            onOpenChange: open => {
+              if (!open) {
+                stopSnap()
+              }
+            },
+            children: jsx(DialogContent, {
+              className: 'max-w-3xl',
+              children: jsxs('div', {
+                className: 'flex flex-col gap-3',
+                children: [
+                  jsxs(DialogHeader, {
+                    children: [
+                      jsx(DialogTitle, { children: `Snapshot — ${snap.label}` }),
+                      jsx(DialogDescription, {
+                        children:
+                          'Live view. Drag over the image to choose an area — the crop goes to the message input when you snap; without a selection the whole frame does.'
+                      })
+                    ]
+                  }),
+                  jsxs('div', {
+                    ref: snapBoxRef,
+                    className:
+                      'relative select-none overflow-hidden rounded-md border border-(--ui-stroke-secondary) bg-black/20',
+                    style: { touchAction: 'none', cursor: 'crosshair' },
+                    onPointerDown: onSnapPointerDown,
+                    onPointerMove: onSnapPointerMove,
+                    onPointerUp: onSnapPointerUp,
+                    children: [
+                      frameUrl
+                        ? jsx('img', {
+                            src: frameUrl,
+                            alt: 'live snapshot view',
+                            draggable: false,
+                            className: 'block w-full select-none'
+                          })
+                        : jsx('div', {
+                            className:
+                              'flex h-44 items-center justify-center px-4 text-center text-xs text-(--ui-text-quaternary)',
+                            children: frameNote || 'waiting for a frame…'
+                          }),
+                      snapSel
+                        ? jsx('div', {
+                            className: 'pointer-events-none absolute border-2 border-(--ui-accent)',
+                            style: {
+                              left: pctOf(snapSel.x),
+                              top: pctOf(snapSel.y),
+                              width: pctOf(snapSel.w),
+                              height: pctOf(snapSel.h)
+                            }
+                          })
+                        : null
+                    ]
+                  }),
+                  frameUrl && frameNote
+                    ? jsx('div', { className: 'text-xs text-(--ui-text-quaternary)', children: frameNote })
+                    : null,
+                  snapError
+                    ? jsx('div', { className: 'text-xs text-(--ui-danger)', children: snapError })
+                    : null,
+                  jsx(DialogFooter, {
+                    children: jsxs('div', {
+                      className: 'flex items-center gap-2',
+                      children: [
+                        jsx(Button, { variant: 'ghost', onClick: stopSnap, children: 'Cancel' }),
+                        jsx(Button, {
+                          disabled: snapBusy,
+                          onClick: doSnap,
+                          children:
+                            snapSel && snapSel.w >= 0.005 && snapSel.h >= 0.005
+                              ? 'Snap selection'
+                              : 'Snap whole frame'
+                        })
+                      ]
+                    })
+                  })
+                ]
+              })
+            })
+          })
+        : null
     ]
   })
 }

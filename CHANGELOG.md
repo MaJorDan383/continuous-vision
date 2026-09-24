@@ -3,6 +3,18 @@
 All notable changes to this plugin. Nothing before the first public release was published, so
 `1.0.0` covers the whole plugin as shipped.
 
+## [1.3.0] - 2026-09-23
+
+### Added
+- **Manual snapshots.** "check for changes" gains a **manual** option: the watch then checks
+  nothing on its own, and a **snapshot** row appears with two buttons — a camera, and a
+  cropping rectangle. Each button opens the matching source list (cameras; displays and
+  application windows), then a live view where you drag out the area you want. The capture is
+  cropped at the source's full resolution, saved as a PNG under the plugin's state directory
+  (`snaps/`), and staged straight into the chat **message input**, ready to send — without a
+  drag, the whole frame is taken. Switching back to a checking rhythm hides the row again, and
+  either way the pick is applied to a running watch without a restart.
+
 ## [1.2.1] - 2026-09-23
 
 ### Fixed

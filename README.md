@@ -10,6 +10,7 @@ Peripheral Vision is a Hermes plugin that keeps a live view of your screen, wind
 - **Vision routing** — sends frames to the configured vision model automatically
 - **Pre-LLM context injection** — adds live descriptions to a turn through the `pre_llm_call` hook, gated by the inject mode (picked in the pane, or `PV_VISION_INJECT_MODE`) so a screen that has not moved does not pay for itself on every turn
 - **Desktop pane** — shows a live preview with monitor/window/camera picker, vision model candidates, and pin support
+- **Manual snapshots** — set "check for changes" to manual and snapshot on demand: a camera frame, or a drag-cropped screenshot of a display or window, lands in the message input ready to send
 
 ## Installation
 
@@ -97,7 +98,8 @@ choose a display, window, or camera in the desktop pane. The pane shows:
 4. **Vision candidates** — model suggestions based on intake size
 5. **Pin button** — lock a specific vision model for the session
 6. **Inject picker** ("rides your turns") — when fresh readings are shared; see [Injection modes](#injection-modes)
-7. **Status** — live status of the capture engine, frame count, source info
+7. **Snapshot row** (manual) — camera and drag-crop buttons, shown when "check for changes" is set to manual; see [Manual snapshots](#manual-snapshots)
+8. **Status** — live status of the capture engine, frame count, source info
 
 Once a source is selected, descriptions are injected into Hermes context before a response,
 giving the assistant a live view of your screen. How often is yours to decide:
@@ -129,6 +131,18 @@ characters and 3 descriptions. An unrecognised value logs a warning once and fal
 `on_change` compares the descriptions themselves, not the whole block: the header states the
 frame's age, which changes every turn, so a whole-text comparison would never match and the mode
 would save nothing.
+
+### Manual snapshots
+
+Set **"check for changes"** to **manual** and the watch stops checking on its own — nothing is
+described until you snapshot — while a **snapshot** row appears in the pane: one button with a
+camera icon (a camera frame) and one with a cropping-rectangle icon (a screenshot). Each button
+first pops the matching source list — cameras for the camera button; displays and application
+windows for the screen button — and picking a source opens a live view where you drag out the
+area to keep. Snapping crops at the source's full resolution, saves a PNG under the plugin's
+state directory (`snaps/`), and stages it into the chat **message input**, ready to send like
+any other image. No drag? The whole frame is taken. Switching back to a rhythm hides the row
+again, and either pick is applied to a running watch without a restart.
 
 ## Security & Privacy
 
