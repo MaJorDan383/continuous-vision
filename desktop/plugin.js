@@ -277,7 +277,7 @@ function PeripheralVisionPane({ ctx }) {
       } else {
         setPickerOpen(false)
         setMode('') // re-sync the picker to the watch that just started
-        host.notify({ kind: 'info', message: `Peripheral vision → ${chosen.label}` })
+        host.notify({ kind: 'info', message: `Peripheral Vision → ${chosen.label}` })
       }
     } catch (err) {
       setError(String((err && err.message) || err))
@@ -334,7 +334,7 @@ function PeripheralVisionPane({ ctx }) {
     setError('')
     try {
       await ctx.rest('/vision', { method: 'POST', body: { provider, model } })
-      host.notify({ kind: 'info', message: `Peripheral vision → ${model}` })
+      host.notify({ kind: 'info', message: `Peripheral Vision → ${model}` })
       await queryClient.invalidateQueries({ queryKey: [ID, 'vision'] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'status'] })
     } catch (err) {
@@ -840,12 +840,12 @@ function VisionChip({ ctx }) {
   // "waiting" and "source gone" have to be distinguishable from "off" at a glance:
   // a watch that is up but describing nothing must not look like a healthy one.
   const label = !running
-    ? 'vision'
+    ? 'Vision'
     : data.source_missing
-      ? 'vision · source gone'
+      ? 'Vision · source gone'
       : data.waiting
-        ? 'vision · waiting'
-        : `vision · ${data.count || 0}`
+        ? 'Vision · waiting'
+        : `Vision · ${data.count || 0}`
   const detail = data.source_missing
     ? `the watched source is gone (${source})`
     : data.waiting

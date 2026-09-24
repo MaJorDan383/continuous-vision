@@ -3,6 +3,13 @@
 All notable changes to this plugin. Nothing before the first public release was published, so
 `1.0.0` covers the whole plugin as shipped.
 
+## [1.2.1] - 2026-09-23
+
+### Fixed
+- The statusbar chip label is title-cased — `Vision`, `Vision · N`, `Vision · waiting`,
+  `Vision · source gone` (it read `vision …`). The source/model toasts read
+  `Peripheral Vision → …`, matching the name everywhere else.
+
 ## [1.2.0] - 2026-09-23
 
 ### Added
