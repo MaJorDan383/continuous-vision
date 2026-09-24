@@ -18,8 +18,12 @@ Source, issues and releases: **https://github.com/MaJorDan383/continuous-vision*
 ### Requirements
 - **Windows 10/11** (the capture stack uses Win32/DWM/DirectShow — no Linux/macOS support)
 - Python 3.9+
-- Hermes **0.21.4 or newer** (declared as `requires_hermes` in `plugin.yaml`; the loader refuses
-  to load the plugin rather than half-work on an older tree)
+- Hermes **0.20.1 or newer** (declared as `requires_hermes` in `plugin.yaml`). 0.20.1 is the
+  oldest host that has everything the plugin calls — `ctx.on_unload` and the `pre_llm_call`
+  hook both landed in it. Hosts before 0.21.2 ignore the declaration entirely (they warn, they
+  never refuse); from 0.21.2 on, the loader enforces it. Use **0.21.4+** if the vision model
+  lives on OpenCode Zen/Go: those endpoints reject requests without session-affinity headers,
+  and the host helper that builds them only exists from 0.21.4.
 - Python packages `opencv-python-headless`, `Pillow`, `openai` (declared in `pyproject.toml`).
   Hermes offers to install a plugin's declared dependencies when you enable it; if capture
   reports a missing dependency instead, install them into the environment that runs Hermes:

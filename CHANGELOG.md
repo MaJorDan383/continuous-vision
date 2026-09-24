@@ -22,8 +22,11 @@ All notable changes to this plugin. Nothing before the first public release was 
   log a warning once and fall back to the default. `tool_only` is reserved for builds that expose
   a live-view tool: this plugin registers none, so it injects nothing and logs a warning rather
   than looking like a silent failure.
-- `requires_hermes: ">=0.21.4"` in the manifest, so an older tree refuses the plugin instead of
-  half-loading it.
+- `requires_hermes: ">=0.20.1"` in the manifest — the oldest host that has `ctx.on_unload` and
+  the `pre_llm_call` hook the plugin uses (0.20.0 has no `on_unload`, so its unload path would
+  leak the capture loop). The loader only understands this key from 0.21.2 on; older hosts warn
+  and ignore it rather than refusing. OpenCode Zen/Go as the vision model needs 0.21.4+, where
+  `agent.opencode_affinity` (the session-affinity headers those endpoints require) appears.
 - Tests for the unload path, the injection gates, the injection modes, the vision pipeline and
   the status heartbeat (`test_unload_stop.py`, `test_context_injection.py`,
   `test_injection_modes.py`, `test_vision_pipeline.py`, `test_heartbeat_gate.py`,

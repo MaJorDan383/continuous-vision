@@ -9,9 +9,11 @@ license: "MIT"
 author: "MaJorDan"
 homepage: "https://github.com/MaJorDan383/continuous-vision"
 platforms: ["windows"]
-# Verified against this version, and the backend imports private Hermes modules
-# (agent.image_routing, agent.opencode_affinity, ...) that older trees do not have — so fail
-# closed rather than half-load. Loosen only after testing a specific older build.
-requires_hermes: ">=0.21.4"
+# Lowest host with everything the plugin calls: ctx.on_unload and the pre_llm_call hook both
+# exist from 0.20.1 (0.20.0 has no on_unload, so its unload path would leak the capture loop),
+# as do the pane API and the dashboard/plugin.js conventions. Hosts older than 0.21.2 ignore
+# this key (they warn, never refuse); from 0.21.2 on it is enforced. Use 0.21.4+ when the vision
+# model lives on OpenCode Zen/Go: agent.opencode_affinity (session-affinity headers) starts there.
+requires_hermes: ">=0.20.1"
 provides_hooks:
   - pre_llm_call
